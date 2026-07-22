@@ -1,0 +1,18 @@
+{
+  "name": "gengit3d",
+  "version": "0.1.0",
+  "description": "3D git commit graph visualizer (parse git log -> three.js scene). Standalone, decoupled from GLSL_DISCORD bot.",
+  "type": "module",
+  "bin": {
+    "gengit3d": "./bin/gengit3d.js"
+  },
+  "scripts": {
+    "parse": "node bin/gengit3d.js parse",
+    "serve": "node bin/gengit3d.js serve",
+    "start": "node bin/gengit3d.js"
+  },
+  "dependencies": {
+    "three": "^0.160.0"
+  },
+  "license": "MIT"
+}

@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GenGit3D — 3D Git Commit Graph</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #121214; color: #e0e0e0; font-family: 'Segoe UI', system-ui, sans-serif; overflow: hidden; }
+    #app { position: fixed; inset: 0; }
+    #gengit3d-stats { position: fixed; top: 10px; left: 10px; font: 12px monospace; background: #000a; padding: 6px 10px; border-radius: 6px; z-index: 5; }
+    #gengit3d-help { position: fixed; bottom: 10px; left: 10px; font: 11px monospace; color: #888; z-index: 5; }
+    #gengit3d-loading { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; font: 16px monospace; color: #888; z-index: 4; }
+    .err { color: #e05c75; }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+  <div id="gengit3d-stats">loading…</div>
+  <div id="gengit3d-help">drag: rotate · scroll: zoom · right-drag: pan · hover node: commit info</div>
+  <div id="gengit3d-loading">fetching gengit3d.graph.json …</div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+
+  <script type="module">
+    import { renderGraph } from './src/scene.js';
+    const app = document.getElementById('app');
+    const loading = document.getElementById('gengit3d-loading');
+
+    async function boot() {
+      let graph;
+      try {
+        const res = await fetch('./gengit3d.graph.json', { cache: 'no-store' });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        graph = await res.json();
+      } catch (e) {
+        loading.innerHTML = '<span class="err">failed to load gengit3d.graph.json — run `node bin/gengit3d.js parse` first.<br>' + e.message + '</span>';
+        return;
+      }
+      loading.style.display = 'none';
+      renderGraph(app, graph);
+    }
+    boot();
+  </script>
+</body>
+</html>
