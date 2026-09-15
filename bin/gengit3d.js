@@ -27,6 +27,7 @@ import { dirname, join, resolve } from 'node:path';
 import http from 'node:http';
 import { buildGraph } from '../src/gitlog.js';
 import { layoutGraph, relax } from '../src/layout3d.js';
+import { buildSimilarEdges } from '../src/similar-commits.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..');
@@ -49,6 +50,9 @@ async function cmdParse(opts) {
   const repo = resolve(toNative(opts.repo) || process.cwd());
   console.log(`[gengit3d] parsing git log in ${repo} ...`);
   const graph = await buildGraph(repo, { max: opts.max || 0 });
+  // post-process: similar-commits edges (dashed links in the 3D scene)
+  graph.similarEdges = buildSimilarEdges(graph);
+  console.log(`[gengit3d] similarEdges=${graph.similarEdges.length}`);
   layoutGraph(graph);
   if (opts.relax) relax(graph);
   // strip heavy fields for browser? keep nodes lightweight

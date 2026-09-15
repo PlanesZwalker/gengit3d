@@ -151,3 +151,10 @@ export function renderGraph(container, graph) {
     dispose() { cancelAnimationFrame(raf); controls.dispose(); renderer.dispose(); },
   };
 }
+
+// Expose for debugging/inspection (dev only)
+if (process.env.NODE_ENV !== 'production') {
+  window.__gengit3d_scene = scene;
+  window.__gengit3d_renderer = renderer;
+  window.__gengit3d_camera = camera;
+}
