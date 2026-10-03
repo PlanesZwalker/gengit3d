@@ -38,7 +38,7 @@ export function renderGraph(container, graph) {
     const center = new THREE.Vector3();
     box.getCenter(center);
     const maxDim = Math.max(size.x, size.y, size.z, 10);
-    const fitDist = (maxDim / 2) / Math.tan((camera.fov * Math.PI) / 360) * 1.4;
+    const fitDist = (maxDim / 2 / Math.tan((camera.fov * Math.PI) / 360)) * 1.4;
     camera.position.set(center.x, center.y, center.z + fitDist);
     camera.lookAt(center);
 
@@ -60,14 +60,14 @@ export function renderGraph(container, graph) {
     // edges
     const positions = [];
     const colorArr = [];
-    const nodeById = new Map(graph.nodes.map((n) => [n.id, n]));
+    const nodeById = new Map(graph.nodes.map(n => [n.id, n]));
     const cTmp = new THREE.Color();
     for (const e of graph.edges) {
         const s = nodeById.get(e.source);
         const t = nodeById.get(e.target);
         if (!s || !t) continue;
         positions.push(s.x, s.y, s.z, t.x, t.y, t.z);
-        const col = BRANCH_PALETTE[(graph.branches.find((b) => b.id === s.branch)?.color ?? 0) % BRANCH_PALETTE.length];
+        const col = BRANCH_PALETTE[(graph.branches.find(b => b.id === s.branch)?.color ?? 0) % BRANCH_PALETTE.length];
         cTmp.setHex(col);
         colorArr.push(cTmp.r, cTmp.g, cTmp.b, cTmp.r, cTmp.g, cTmp.b);
     }
@@ -81,7 +81,7 @@ export function renderGraph(container, graph) {
     const nodeGeo = new THREE.SphereGeometry(0.6, 16, 16);
     const nodeGroup = new THREE.Group();
     for (const n of graph.nodes) {
-        const col = BRANCH_PALETTE[(graph.branches.find((b) => b.id === n.branch)?.color ?? 0) % BRANCH_PALETTE.length];
+        const col = BRANCH_PALETTE[(graph.branches.find(b => b.id === n.branch)?.color ?? 0) % BRANCH_PALETTE.length];
         const mat = new THREE.MeshStandardMaterial({ color: col, roughness: 0.4, metalness: 0.1 });
         const mesh = new THREE.Mesh(nodeGeo, mat);
         mesh.position.set(n.x, n.y, n.z);
@@ -93,13 +93,16 @@ export function renderGraph(container, graph) {
     // raycaster for click/hover tooltips
     const raycaster = new THREE.Raycaster();
     const mouse = new THREE.Vector2();
-    const tooltip = document.getElementById('gengit3d-tooltip') || (() => {
-        const el = document.createElement('div');
-        el.id = 'gengit3d-tooltip';
-        el.style.cssText = 'position:absolute;pointer-events:none;background:#000a;color:#fff;padding:4px 8px;border-radius:4px;font:12px monospace;display:none;z-index:10;';
-        document.body.appendChild(el);
-        return el;
-    })();
+    const tooltip =
+        document.getElementById('gengit3d-tooltip') ||
+        (() => {
+            const el = document.createElement('div');
+            el.id = 'gengit3d-tooltip';
+            el.style.cssText =
+                'position:absolute;pointer-events:none;background:#000a;color:#fff;padding:4px 8px;border-radius:4px;font:12px monospace;display:none;z-index:10;';
+            document.body.appendChild(el);
+            return el;
+        })();
 
     function onMove(ev) {
         const rect = renderer.domElement.getBoundingClientRect();
@@ -110,8 +113,8 @@ export function renderGraph(container, graph) {
         if (hits.length) {
             const n = hits[0].object.userData;
             tooltip.style.display = 'block';
-            tooltip.style.left = (ev.clientX + 12) + 'px';
-            tooltip.style.top = (ev.clientY + 12) + 'px';
+            tooltip.style.left = ev.clientX + 12 + 'px';
+            tooltip.style.top = ev.clientY + 12 + 'px';
             tooltip.textContent = `${n.short} ${n.author}: ${n.subject.slice(0, 60)}`;
             document.body.style.cursor = 'pointer';
         } else {
@@ -146,15 +149,20 @@ export function renderGraph(container, graph) {
         stats.textContent = `commits: ${graph.nodes.length} | branches: ${graph.branches.length} | edges: ${graph.edges.length} | head: ${graph.head?.slice(0, 7) ?? '?'}`;
     }
 
-    return {
-        scene, camera, renderer, controls,
-        dispose() { cancelAnimationFrame(raf); controls.dispose(); renderer.dispose(); },
-    };
-}
+    // Expose handles for debugging/inspection from the browser dev tools.
+    // NOTE: this runs in the browser — never reference `process.env` here
+    // (Node globals are undefined in a page and throw a ReferenceError).
+    window.__gengit3d = { scene, camera, renderer, controls };
 
-// Expose for debugging/inspection (dev only)
-if (process.env.NODE_ENV !== 'production') {
-    window.__gengit3d_scene = scene;
-    window.__gengit3d_renderer = renderer;
-    window.__gengit3d_camera = camera;
+    return {
+        scene,
+        camera,
+        renderer,
+        controls,
+        dispose() {
+            cancelAnimationFrame(raf);
+            controls.dispose();
+            renderer.dispose();
+        },
+    };
 }
