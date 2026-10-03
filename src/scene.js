@@ -5,27 +5,22 @@
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-
-const BRANCH_PALETTE = [
-    0x4f9dff, // blue
-    0x57c785, // green
-    0xff8c42, // orange
-    0xe05c75, // red
-    0xb583ff, // purple
-    0xf2c14e, // yellow
-];
+import { getTheme } from './themes.js';
 
 /**
  * Build and render the graph into a container element.
  * @param {HTMLElement} container
  * @param {object} graph  output of gitlog.parseGitLog (post-layout)
+ * @param {string} [themeName]  key into THEMES (defaults to midnight)
  */
-export function renderGraph(container, graph) {
+export function renderGraph(container, graph, themeName) {
+    const theme = getTheme(themeName);
+    const PALETTE = theme.palette;
     const width = container.clientWidth || 800;
     const height = container.clientHeight || 600;
 
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x0b0b10);
+    scene.background = new THREE.Color(theme.background);
 
     const camera = new THREE.PerspectiveCamera(55, width / height, 1, 40000);
 
@@ -42,8 +37,10 @@ export function renderGraph(container, graph) {
     camera.position.set(center.x + fitDist * 0.55, center.y + fitDist * 0.35, center.z + fitDist * 0.9);
     camera.lookAt(center);
 
-    // depth fog tuned to the actual cloud size so far strands visibly recede
-    scene.fog = new THREE.Fog(0x0b0b10, maxDim * 0.45, maxDim * 2.1);
+    // depth fog tuned to the actual cloud size. On light themes the fog colour is
+    // a MID tone (not the pale background) so distant strands stay readable.
+    const fogCol = theme.fogColor != null ? theme.fogColor : theme.background;
+    scene.fog = new THREE.Fog(fogCol, maxDim * theme.fog[0], maxDim * theme.fog[1]);
 
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
@@ -57,33 +54,33 @@ export function renderGraph(container, graph) {
     controls.autoRotateSpeed = 0.45;
     controls.target.copy(center);
 
-    // lights — key + fill + rim so spheres read as solid matter
-    scene.add(new THREE.AmbientLight(0xffffff, 0.5));
-    const key = new THREE.DirectionalLight(0xffffff, 1.2);
+    // lights — key + fill + rim so spheres read as solid matter (per theme)
+    scene.add(new THREE.AmbientLight(theme.lights.ambient[0], theme.lights.ambient[1]));
+    const key = new THREE.DirectionalLight(theme.lights.key[0], theme.lights.key[1]);
     key.position.set(1, 1.4, 1.2);
     scene.add(key);
-    const fill = new THREE.DirectionalLight(0x88aaff, 0.55);
+    const fill = new THREE.DirectionalLight(theme.lights.fill[0], theme.lights.fill[1]);
     fill.position.set(-1.2, -0.4, -1);
     scene.add(fill);
-    const rim = new THREE.PointLight(0xff9a5c, 0.9, maxDim * 6);
+    const rim = new THREE.PointLight(theme.lights.rim[0], theme.lights.rim[1], maxDim * 6);
     rim.position.set(0, maxDim * 0.6, maxDim * 0.9);
     scene.add(rim);
 
     const nodeById = new Map(graph.nodes.map((n) => [n.id, n]));
-    const colorOf = (branchId) => BRANCH_PALETTE[(graph.branches.find((b) => b.id === branchId)?.color ?? 0) % BRANCH_PALETTE.length];
+    const colorOf = (branchId) => PALETTE[(graph.branches.find((b) => b.id === branchId)?.color ?? 0) % PALETTE.length];
 
     // prominence: the big branches keep their colour, the long tail recedes
     const branchesSorted = [...graph.branches].sort((a, b) => b.commits - a.commits);
     const rankOf = new Map(branchesSorted.map((b, i) => [b.id, i]));
     const PROMINENT = 36;
-    const RECEDE = new THREE.Color(0x1a1e2e);
+    const RECEDE = new THREE.Color(theme.recede);
     const colorCache = new Map();
     const isMajor = (branchId) => (rankOf.get(branchId) ?? 9999) < PROMINENT;
     const tintOf = (branchId) => {
         let c = colorCache.get(branchId);
         if (c) return c;
         c = new THREE.Color(colorOf(branchId));
-        if (!isMajor(branchId)) c.lerp(RECEDE, 0.8); // long tail -> near-background
+        if (!isMajor(branchId)) c.lerp(RECEDE, theme.recedeAmount); // long tail -> toward background
         colorCache.set(branchId, c);
         return c;
     };
@@ -104,7 +101,7 @@ export function renderGraph(container, graph) {
     const q = new THREE.Quaternion();
     const m = new THREE.Matrix4();
     const edgeGeo = whiteAttr(new THREE.CylinderGeometry(0.5, 0.5, 1, 6, 1, true));
-    const edgeMat = new THREE.MeshStandardMaterial({ roughness: 0.75, metalness: 0.2, vertexColors: true, transparent: true, opacity: 0.9 });
+    const edgeMat = new THREE.MeshStandardMaterial({ roughness: 0.75, metalness: 0.2, vertexColors: true, transparent: true, opacity: theme.edgeOpacity });
     const MAX_EDGE_INSTANCES = 120000;
     const nEdges = Math.min(graph.edges.length, MAX_EDGE_INSTANCES);
     const edges = new THREE.InstancedMesh(edgeGeo, edgeMat, nEdges);
@@ -166,10 +163,14 @@ export function renderGraph(container, graph) {
     const tooltip = document.getElementById('gengit3d-tooltip') || (() => {
         const el = document.createElement('div');
         el.id = 'gengit3d-tooltip';
-        el.style.cssText = 'position:absolute;pointer-events:none;background:#000c;color:#fff;padding:4px 8px;border-radius:4px;font:12px monospace;display:none;z-index:10;';
+        el.style.cssText = 'position:absolute;pointer-events:none;padding:4px 8px;border-radius:4px;font:12px monospace;display:none;z-index:10;';
         document.body.appendChild(el);
         return el;
     })();
+    // tooltip colours come from the theme (dark tooltip on light themes and vice-versa)
+    tooltip.style.background = theme.ui.tooltipBg;
+    tooltip.style.color = theme.ui.tooltipText;
+    tooltip.style.border = '1px solid ' + theme.ui.border;
 
     function onMove(ev) {
         const rect = renderer.domElement.getBoundingClientRect();
@@ -222,10 +223,10 @@ export function renderGraph(container, graph) {
     // Expose handles for debugging/inspection from the browser dev tools.
     // NOTE: this runs in the browser — never reference `process.env` here
     // (Node globals are undefined in a page and throw a ReferenceError).
-    window.__gengit3d = { scene, camera, renderer, controls, nodes, edges };
+    window.__gengit3d = { scene, camera, renderer, controls, nodes, edges, theme: themeName || 'midnight' };
 
     return {
-        scene, camera, renderer, controls,
+        scene, camera, renderer, controls, theme: themeName || 'midnight',
         dispose() { cancelAnimationFrame(raf); controls.dispose(); renderer.dispose(); },
     };
 }
