@@ -105,6 +105,61 @@ function sendJson(res, code, obj) {
 }
 
 const ALLOWED_URL = /^(https?:\/\/|git:\/\/|ssh:\/\/|git@[\w.-]+:|file:\/\/)/i;
+const SHA_RE = /^[0-9a-fA-F]{4,40}$/;
+
+/**
+ * Commit details for one commit: metadata + changed files (+ optional patch).
+ * GET /api/commit?repo=<path>&hash=<sha>&patch=1&maxPatch=<chars>
+ */
+async function handleCommit(res, q) {
+    const repo = resolve(toNative(q.get('repo') || ''));
+    const hash = (q.get('hash') || '').trim();
+    const wantPatch = q.get('patch') !== '0';
+    const maxPatch = Math.min(400000, Math.max(1000, parseInt(q.get('maxPatch') || '60000', 10) || 60000));
+    if (!repo) return sendJson(res, 400, { error: 'missing ?repo=<path>' });
+    if (!SHA_RE.test(hash)) return sendJson(res, 400, { error: 'invalid ?hash=<sha>' });
+    if (!(await isGitRepo(repo))) return sendJson(res, 400, { error: `not a git repository: ${repo}` });
+
+    const US = '\x1f';
+    try {
+        // metadata
+        const fmt = ['%H', '%h', '%an', '%ae', '%ad', '%cn', '%ce', '%cd', '%s', '%b'].join(US);
+        const metaOut = await execFileP('git', ['show', '-s', `--format=${fmt}`, '--date=iso-strict', hash],
+            { cwd: repo, maxBuffer: 16 * 1024 * 1024, timeout: 20000 });
+        const [full, short, an, ae, ad, cn, ce, cd, subject, body] = metaOut.stdout.split(US);
+        // parents (separate, so %P does not clash with the %b body)
+        const pOut = await execFileP('git', ['show', '-s', '--format=%P', hash], { cwd: repo, timeout: 20000 });
+        const parents = (pOut.stdout.trim() || '').split(/\s+/).filter(Boolean);
+        // changed files (numstat)
+        const statOut = await execFileP('git', ['show', '--numstat', '--format=', hash],
+            { cwd: repo, maxBuffer: 64 * 1024 * 1024, timeout: 30000 });
+        const files = statOut.stdout.split('\n').filter(Boolean).map((line) => {
+            const [add, del, ...rest] = line.split('\t');
+            return { added: add === '-' ? null : parseInt(add, 10), deleted: del === '-' ? null : parseInt(del, 10), path: rest.join('\t') };
+        });
+        // patch (optional, truncated)
+        let patch = '';
+        let patchTruncated = false;
+        if (wantPatch) {
+            const p = await execFileP('git', ['show', '--patch', '--no-color', '--format=', hash],
+                { cwd: repo, maxBuffer: 128 * 1024 * 1024, timeout: 30000 });
+            patch = p.stdout;
+            if (patch.length > maxPatch) { patch = patch.slice(0, maxPatch); patchTruncated = true; }
+        }
+        const totalAdded = files.reduce((s, f) => s + (f.added || 0), 0);
+        const totalDeleted = files.reduce((s, f) => s + (f.deleted || 0), 0);
+        sendJson(res, 200, {
+            repo, hash: full, short, author: an, email: ae, date: ad,
+            committer: cn, committerEmail: ce, commitDate: cd,
+            subject, body, parents, files,
+            stats: { files: files.length, added: totalAdded, deleted: totalDeleted },
+            patch, patchTruncated,
+        });
+    } catch (e) {
+        const msg = (e.stderr || e.message || '').toString().slice(0, 300);
+        sendJson(res, 500, { error: `git show failed: ${msg}` });
+    }
+}
 
 async function handleGraph(res, q) {
     const repo = resolve(toNative(q.get('repo') || ''));
@@ -189,6 +244,7 @@ async function cmdServe(opts) {
 
         // ── API ──
         if (pathname === '/api/graph') return handleGraph(res, u.searchParams);
+        if (pathname === '/api/commit') return handleCommit(res, u.searchParams);
         if (pathname === '/api/clone') return handleClone(res, u.searchParams);
         if (pathname === '/api/repos') return handleRepos(res, u.searchParams);
 
