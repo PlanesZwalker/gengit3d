@@ -1,50 +1,80 @@
 // layout3d.js — assign 3D coordinates to git graph nodes.
 //
-// Strategy (dagre/force-style, lightweight, zero-dep):
-//   - x axis  = commit depth (time / generation). depth already computed in gitlog.js.
-//   - y axis  = branch lane (each branch gets its own horizontal row).
-//   - z axis  = small jitter per commit to avoid exact overlaps + readable depth.
+// Strategy (deterministic, zero-dep, volumetric):
+//   - y axis  = commit depth (time / generation), history grows UPWARD.
+//   - xz plane = branch position around a cylinder (angle + radius), so each
+//                branch is a distinct vertical strand with real depth separation.
 //
-// This is a deterministic lane layout (not a physics sim) so the same repo
-// always renders the same graph — good for debugging. A force relaxation pass
-// is available as `relax()` if you want organic spacing later.
+// Branches are sorted by size. The most significant ones get evenly spaced
+// angular slots on an inner radius; the long tail of tiny/fragment branches is
+// spread on an outer ring so it reads as a background halo instead of a solid
+// wall. Per-commit wobble (hash-based, deterministic) gives each strand organic
+// volume so the render is clearly 3D rather than a flat plane.
+//
+// Deterministic: the same repo always renders the same shape (good for diffing).
 
 /**
  * Compute layout coordinates for a graph produced by gitlog.parseGitLog.
- * Mutates node.x/y/z in place and returns the graph.
+ * Mutates node.x/y/z (+ node.lane, node.angle, node.radius) in place.
  * @param {object} graph
  * @param {object} [opts]
- * @param {number} [opts.laneGap=3]  distance between branch lanes
- * @param {number} [opts.depthGap=2] distance between commits along x
- * @param {number} [opts.zJitter=0.6] random-ish z spread
- * @param {number} [opts.maxLanes=64] distinct lanes; extra branches share last lane
+ * @param {number} [opts.height=300]        vertical extent of the time axis (y)
+ * @param {number} [opts.radiusMajor=120]   radius for the prominent branches
+ * @param {number} [opts.radiusMinor=195]   radius for the long-tail branches
+ * @param {number} [opts.prominentCount=24] branches given a dedicated angular slot
+ * @param {number} [opts.angleWobble=0.16]  per-commit angular spread (radians)
+ * @param {number} [opts.radiusWobble=10]   per-commit radial spread
  */
-export function layoutGraph(graph, { laneGap = 3, depthGap = 2, zJitter = 0.6, maxLanes = 64 } = {}) {
-    // assign lane index per branch id: biggest branches get low lanes, the rest
-    // share the last ("misc") lane so the graph stays readable.
-    const sorted = [...graph.branches].sort((a, b) => b.commits - a.commits);
-    const laneOf = new Map();
-    sorted.forEach((b, i) => {
-        laneOf.set(b.id, i < maxLanes - 1 ? i : maxLanes - 1);
+export function layoutGraph(
+    graph,
+    {
+        height = 300,
+        radiusMajor = 100,
+        radiusMinor = 250,
+        prominentCount = 36,
+        angleWobble = 0.05,
+        radiusWobble = 5,
+    } = {}
+) {
+    const branches = [...graph.branches].sort((a, b) => b.commits - a.commits);
+    const nBranches = branches.length || 1;
+    const nProminent = Math.min(prominentCount, nBranches);
+    const GOLDEN = Math.PI * (3 - Math.sqrt(5)); // ~2.39996 rad
+
+    // assign each branch an angle + radius. Golden-angle spacing keeps strands
+    // from lining up, and concentric shells add radial separation so branches
+    // are distinguishable even at similar angles. The long tail of tiny
+    // branches is pushed far out into a faint halo, away from the main strands.
+    const posOf = new Map();
+    branches.forEach((b, rank) => {
+        let angle, radius;
+        if (rank < nProminent) {
+            angle = rank * GOLDEN;
+            radius = radiusMajor + (rank % 6) * 38; // 6 inner shells (120..310)
+        } else {
+            const k = rank - nProminent;
+            angle = (k + 0.5) * GOLDEN;
+            radius = radiusMinor + (k % 5) * 10; // outer halo (350..390)
+        }
+        posOf.set(b.id, { angle, radius });
     });
+
     const maxDepth = graph.nodes.reduce((m, n) => Math.max(m, n.depth), 0) || 1;
 
     for (const n of graph.nodes) {
-        const lane = laneOf.get(n.branch) ?? maxLanes - 1;
-        n.lane = lane;
-        n.x = (maxDepth - n.depth) * depthGap; // newest commit near x=0
-        n.y = lane * laneGap;
-        // deterministic pseudo-jitter from hash so layout is stable
-        const h = hash01(n.id);
-        n.z = (h - 0.5) * 2 * zJitter;
+        const p = posOf.get(n.branch) || { angle: 0, radius: radiusMinor };
+        const h1 = hash01(n.id);
+        const h2 = hash01(n.id + '#r');
+        const angle = p.angle + (h1 - 0.5) * 2 * angleWobble;
+        const radius = p.radius + (h2 - 0.5) * 2 * radiusWobble;
+        n.angle = angle;
+        n.radius = radius;
+        n.x = Math.cos(angle) * radius;
+        n.z = Math.sin(angle) * radius;
+        // history grows upward: root commits at the bottom, tips at the top
+        n.y = (n.depth / maxDepth - 0.5) * height;
+        n.lane = n.lane ?? 0; // legacy field kept for compatibility
     }
-
-    // center the cloud around origin for nicer OrbitControls default view
-    let cx = 0, cy = 0, cz = 0;
-    for (const n of graph.nodes) { cx += n.x; cy += n.y; cz += n.z; }
-    const k = graph.nodes.length || 1;
-    cx /= k; cy /= k; cz /= k;
-    for (const n of graph.nodes) { n.x -= cx; n.y -= cy; n.z -= cz; }
 
     return graph;
 }
@@ -60,29 +90,39 @@ function hash01(str) {
 }
 
 /**
- * Optional spring relaxation (force-directed) on top of the lane layout.
- * Pushes overlapping nodes apart along y within the same depth column.
+ * Optional light relaxation: nudges nodes apart within the same depth band so
+ * dense columns breathe. Operates on the xz plane (radial), preserving the
+ * vertical time axis. Opt-in via `--relax`.
  * @param {object} graph
  * @param {object} [opts]
  */
-export function relax(graph, { iterations = 30, repel = 0.8 } = {}) {
+export function relax(graph, { iterations = 20, repel = 0.6 } = {}) {
     for (let it = 0; it < iterations; it++) {
-    // group by depth column
         const cols = new Map();
         for (const n of graph.nodes) {
-            const d = n.depth;
-            if (!cols.has(d)) cols.set(d, []);
-            cols.get(d).push(n);
+            if (!cols.has(n.depth)) cols.set(n.depth, []);
+            cols.get(n.depth).push(n);
         }
         for (const [, col] of cols) {
-            // sort by y, spread apart if too close
-            col.sort((a, b) => a.y - b.y);
-            for (let i = 1; i < col.length; i++) {
-                const a = col[i - 1], b = col[i];
-                const minGap = 2.2;
-                if (b.y - a.y < minGap) {
-                    const shift = (minGap - (b.y - a.y)) * repel;
-                    b.y += shift;
+            if (col.length < 2) continue;
+            for (let i = 0; i < col.length; i++) {
+                for (let j = i + 1; j < col.length; j++) {
+                    const a = col[i],
+                        b = col[j];
+                    let dx = b.x - a.x,
+                        dz = b.z - a.z;
+                    const d2 = dx * dx + dz * dz;
+                    const minD = 6;
+                    if (d2 < minD * minD) {
+                        const d = Math.sqrt(d2) || 0.001;
+                        const push = ((minD - d) / d) * repel * 0.5;
+                        dx *= push;
+                        dz *= push;
+                        b.x += dx;
+                        b.z += dz;
+                        a.x -= dx;
+                        a.z -= dz;
+                    }
                 }
             }
         }
