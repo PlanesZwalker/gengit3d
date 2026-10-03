@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="midnight">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -7,23 +7,32 @@
   <!-- inline favicon: avoids the default /favicon.ico 404 request -->
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='13' fill='%234f9dff'/%3E%3Ccircle cx='16' cy='7' r='4' fill='%2357c785'/%3E%3Ccircle cx='16' cy='25' r='4' fill='%23ff8c42'/%3E%3Cline x1='16' y1='11' x2='16' y2='21' stroke='%23fff' stroke-width='2'/%3E%3C/svg%3E">
   <style>
-    html, body { margin: 0; height: 100%; background: #121214; color: #e0e0e0; font-family: 'Segoe UI', system-ui, sans-serif; overflow: hidden; }
+    /* All chrome colours come from CSS variables, set per theme by applyTheme().
+       Defaults below = midnight; the light themes override them at runtime. */
+    :root {
+      --bg: #0b0b10; --panel: #16171c; --border: #2a2c36; --text: #e0e0e0;
+      --muted: #8b93a7; --accent: #4f9dff; --input: #0d0e12;
+      --btn: #2a3550; --btn-border: #3a4a70; --btn-text: #dbe6ff;
+      --overlay: #000000aa; --err: #e05c75; --busy: #f2c14e;
+    }
+    html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; overflow: hidden; transition: background .15s, color .15s; }
     #app { position: fixed; inset: 0; }
-    #gengit3d-stats { position: fixed; top: 10px; left: 10px; font: 12px monospace; background: #000a; padding: 6px 10px; border-radius: 6px; z-index: 5; }
-    #gengit3d-help { position: fixed; bottom: 10px; left: 10px; font: 11px monospace; color: #888; z-index: 5; }
-    #gengit3d-loading { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; font: 16px monospace; color: #888; z-index: 4; text-align: center; padding: 0 20px; }
-    .err { color: #e05c75; }
-    #gengit3d-bar { position: fixed; top: 10px; left: 50%; transform: translateX(-50%); z-index: 6; display: flex; gap: 6px; align-items: center; background: #16171c; border: 1px solid #2a2c36; border-radius: 8px; padding: 6px; box-shadow: 0 4px 18px #0008; }
-    #gengit3d-bar input { width: 340px; background: #0d0e12; color: #e0e0e0; border: 1px solid #2a2c36; border-radius: 5px; padding: 6px 9px; font: 12px monospace; outline: none; }
-    #gengit3d-bar input:focus { border-color: #4f9dff; }
-    #gengit3d-bar input#gengit3d-depth { width: 66px; }
-    #gengit3d-bar button { background: #2a3550; color: #dbe6ff; border: 1px solid #3a4a70; border-radius: 5px; padding: 6px 12px; font: 12px monospace; cursor: pointer; }
-    #gengit3d-bar button:hover { background: #35436a; }
+    #gengit3d-stats { position: fixed; top: 10px; left: 10px; font: 12px monospace; background: var(--overlay); color: var(--text); padding: 6px 10px; border-radius: 6px; z-index: 5; border: 1px solid var(--border); }
+    #gengit3d-help { position: fixed; bottom: 10px; left: 10px; font: 11px monospace; color: var(--muted); z-index: 5; }
+    #gengit3d-loading { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; font: 16px monospace; color: var(--muted); z-index: 4; text-align: center; padding: 0 20px; }
+    .err { color: var(--err); }
+    #gengit3d-bar { position: fixed; top: 10px; left: 50%; transform: translateX(-50%); z-index: 6; display: flex; gap: 6px; align-items: center; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 6px; box-shadow: 0 4px 18px #0004; }
+    #gengit3d-bar input, #gengit3d-bar select { background: var(--input); color: var(--text); border: 1px solid var(--border); border-radius: 5px; padding: 6px 9px; font: 12px monospace; outline: none; }
+    #gengit3d-bar input#gengit3d-repo { width: 320px; }
+    #gengit3d-bar input#gengit3d-depth { width: 60px; }
+    #gengit3d-bar input:focus, #gengit3d-bar select:focus { border-color: var(--accent); }
+    #gengit3d-bar button { background: var(--btn); color: var(--btn-text); border: 1px solid var(--btn-border); border-radius: 5px; padding: 6px 12px; font: 12px monospace; cursor: pointer; }
+    #gengit3d-bar button:hover { filter: brightness(1.12); }
     #gengit3d-bar button:disabled { opacity: .5; cursor: default; }
-    #gengit3d-bar label { font: 11px monospace; color: #8b93a7; }
-    #gengit3d-status { position: fixed; top: 58px; left: 50%; transform: translateX(-50%); z-index: 6; font: 11px monospace; color: #9aa4bd; background: #000a; padding: 4px 10px; border-radius: 5px; max-width: 90vw; }
-    #gengit3d-status.busy { color: #f2c14e; }
-    #gengit3d-status.err { color: #e05c75; }
+    #gengit3d-bar label { font: 11px monospace; color: var(--muted); }
+    #gengit3d-status { position: fixed; top: 58px; left: 50%; transform: translateX(-50%); z-index: 6; font: 11px monospace; color: var(--muted); background: var(--overlay); padding: 4px 10px; border-radius: 5px; max-width: 90vw; }
+    #gengit3d-status.busy { color: var(--busy); }
+    #gengit3d-status.err { color: var(--err); }
   </style>
 </head>
 <body>
@@ -36,6 +45,8 @@
     <label for="gengit3d-depth">depth</label>
     <input id="gengit3d-depth" type="number" min="0" value="500" title="shallow clone depth (URL only, 0 = full)" />
     <button id="gengit3d-render">Render</button>
+    <label for="gengit3d-theme">theme</label>
+    <select id="gengit3d-theme" title="colour theme (light + dark)"></select>
   </div>
 
   <div id="gengit3d-stats">loading…</div>
@@ -54,6 +65,7 @@
 
   <script type="module">
     import { renderGraph } from './src/scene.js';
+    import { THEMES, DEFAULT_THEME, getTheme } from './src/themes.js';
 
     const app = document.getElementById('app');
     const loading = document.getElementById('gengit3d-loading');
@@ -62,21 +74,60 @@
     const input = document.getElementById('gengit3d-repo');
     const depthEl = document.getElementById('gengit3d-depth');
     const renderBtn = document.getElementById('gengit3d-render');
+    const themeSel = document.getElementById('gengit3d-theme');
 
-    let current = null; // active scene handle
+    let current = null;       // active scene handle
+    let currentGraph = null;  // last rendered graph (for instant theme switching)
+    let theme = localStorage.getItem('gengit3d.theme') || DEFAULT_THEME;
+    if (!THEMES[theme]) theme = DEFAULT_THEME;
 
     const isUrl = (s) => /^(https?:\/\/|git:\/\/|ssh:\/\/|git@[\w.-]+:|file:\/\/)/i.test(s.trim());
     const setStatus = (msg, kind = '') => { statusEl.textContent = msg; statusEl.className = kind; };
-    const esc = (s) => String(s).replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
+    const esc = (s) => String(s).replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+
+    // ── themes ──────────────────────────────────────────────────────────────
+    function applyChrome(name) {
+      const ui = getTheme(name).ui;
+      const r = document.documentElement.style;
+      r.setProperty('--bg', ui.bg); r.setProperty('--panel', ui.panel);
+      r.setProperty('--border', ui.border); r.setProperty('--text', ui.text);
+      r.setProperty('--muted', ui.muted); r.setProperty('--accent', ui.accent);
+      r.setProperty('--input', ui.input); r.setProperty('--btn', ui.btn);
+      r.setProperty('--btn-border', ui.btnBorder); r.setProperty('--btn-text', ui.btnText);
+      r.setProperty('--overlay', ui.overlay); r.setProperty('--err', ui.err);
+      r.setProperty('--busy', ui.busy);
+      document.documentElement.setAttribute('data-theme', name);
+    }
 
     function draw(graph, label) {
+      currentGraph = graph;
       if (current && current.dispose) current.dispose();
       app.innerHTML = '';
       loading.style.display = 'none';
-      current = renderGraph(app, graph);
+      current = renderGraph(app, graph, theme);
       if (label) setStatus(label);
     }
 
+    function setTheme(name, { rerender = true } = {}) {
+      if (!THEMES[name]) name = DEFAULT_THEME;
+      theme = name;
+      localStorage.setItem('gengit3d.theme', name);
+      applyChrome(name);
+      if (rerender && currentGraph) {
+        const keep = statusEl.textContent;
+        draw(currentGraph, null);   // scene colours live in the WebGL context -> rebuild
+        setStatus(keep);
+      }
+    }
+
+    // populate the theme <select>
+    themeSel.innerHTML = Object.entries(THEMES)
+      .map(([k, t]) => `<option value="${k}">${esc(t.label)}</option>`).join('');
+    themeSel.value = theme;
+    themeSel.addEventListener('change', () => setTheme(themeSel.value));
+    applyChrome(theme);
+
+    // ── data ────────────────────────────────────────────────────────────────
     async function fetchGraph(endpoint, qs, label) {
       setStatus('loading…', 'busy');
       renderBtn.disabled = true;
