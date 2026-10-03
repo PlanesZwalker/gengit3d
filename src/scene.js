@@ -334,6 +334,79 @@ export function renderGraph(container, graph, opts) {
         select,
         setAutoRotate(on) { controls.autoRotate = !!on; },
         toggleTimeline(on) { axisGroup.visible = !!on; },
+        /**
+         * Filter branches by visibility. Nodes/edges of hidden branches are
+         * faded toward the background; visible branches keep their colors.
+         * @param {Set<number>|null} visibleBranchIds  null = show all
+         */
+        setBranchFilter(visibleBranchIds) {
+            const fadeColor = new THREE.Color(theme.recede);
+            const tmpColor = new THREE.Color();
+            // nodes
+            for (let i = 0; i < graph.nodes.length; i++) {
+                const n = graph.nodes[i];
+                const isVisible = !visibleBranchIds || visibleBranchIds.has(n.branch);
+                if (isVisible) {
+                    nodes.setColorAt(i, tintOf(n.branch));
+                } else {
+                    tmpColor.copy(tintOf(n.branch)).lerp(fadeColor, 0.92);
+                    nodes.setColorAt(i, tmpColor);
+                }
+            }
+            nodes.instanceColor.needsUpdate = true;
+            // edges
+            for (let i = 0; i < edges.count; i++) {
+                const e = graph.edges[i];
+                const s = nodeById.get(e.source);
+                if (!s) continue;
+                const isVisible = !visibleBranchIds || visibleBranchIds.has(s.branch);
+                if (isVisible) {
+                    edges.setColorAt(i, tintOf(s.branch));
+                } else {
+                    tmpColor.copy(tintOf(s.branch)).lerp(fadeColor, 0.92);
+                    edges.setColorAt(i, tmpColor);
+                }
+            }
+            edges.instanceColor.needsUpdate = true;
+        },
+        /**
+         * Filter nodes/edges by date range. Nodes outside [minDate, maxDate]
+         * are faded toward the background.
+         * @param {number|null} minDate  timestamp ms, or null
+         * @param {number|null} maxDate  timestamp ms, or null
+         */
+        setDateFilter(minDate, maxDate) {
+            const fadeColor = new THREE.Color(theme.recede);
+            const tmpColor = new THREE.Color();
+            // nodes
+            for (let i = 0; i < graph.nodes.length; i++) {
+                const n = graph.nodes[i];
+                const t = Date.parse(n.date);
+                const inRange = !Number.isFinite(t) || (!minDate || t >= minDate) && (!maxDate || t <= maxDate);
+                if (inRange) {
+                    nodes.setColorAt(i, tintOf(n.branch));
+                } else {
+                    tmpColor.copy(tintOf(n.branch)).lerp(fadeColor, 0.92);
+                    nodes.setColorAt(i, tmpColor);
+                }
+            }
+            nodes.instanceColor.needsUpdate = true;
+            // edges
+            for (let i = 0; i < edges.count; i++) {
+                const e = graph.edges[i];
+                const s = nodeById.get(e.source);
+                if (!s) continue;
+                const t = Date.parse(s.date);
+                const inRange = !Number.isFinite(t) || (!minDate || t >= minDate) && (!maxDate || t <= maxDate);
+                if (inRange) {
+                    edges.setColorAt(i, tintOf(s.branch));
+                } else {
+                    tmpColor.copy(tintOf(s.branch)).lerp(fadeColor, 0.92);
+                    edges.setColorAt(i, tmpColor);
+                }
+            }
+            edges.instanceColor.needsUpdate = true;
+        },
         dispose() { cancelAnimationFrame(raf); controls.dispose(); renderer.dispose(); },
     };
     // Expose handles for debugging/inspection from the browser dev tools.

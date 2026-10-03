@@ -38,6 +38,36 @@
     /* CSS2D timeline tick labels */
     .gengit3d-tick { font: 11px monospace; color: var(--muted); background: var(--overlay); padding: 1px 6px; border-radius: 4px; border: 1px solid var(--border); white-space: nowrap; }
 
+    /* branch legend panel */
+    #gengit3d-legend { position: fixed; top: 0; left: 0; height: 100%; width: 280px; max-width: 80vw; background: var(--panel); border-right: 1px solid var(--border); z-index: 7; display: flex; flex-direction: column; transform: translateX(-100%); transition: transform .18s ease; box-shadow: 6px 0 24px #0004; }
+    #gengit3d-legend.open { transform: translateX(0); }
+    #gengit3d-legend header { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+    #gengit3d-legend header .h { font: 12px monospace; color: var(--muted); }
+    #gengit3d-legend header button { background: transparent; color: var(--text); border: 1px solid var(--border); border-radius: 5px; padding: 3px 9px; font: 12px monospace; cursor: pointer; }
+    #gengit3d-legend .search { padding: 8px 12px; border-bottom: 1px solid var(--border); }
+    #gengit3d-legend .search input { width: 100%; background: var(--input); color: var(--text); border: 1px solid var(--border); border-radius: 5px; padding: 5px 8px; font: 11px monospace; outline: none; box-sizing: border-box; }
+    #gengit3d-legend .search input:focus { border-color: var(--accent); }
+    #gengit3d-legend .bulk { display: flex; gap: 6px; padding: 6px 12px; border-bottom: 1px solid var(--border); }
+    #gengit3d-legend .bulk button { flex: 1; background: var(--btn); color: var(--btn-text); border: 1px solid var(--btn-border); border-radius: 4px; padding: 4px 6px; font: 10px monospace; cursor: pointer; }
+    #gengit3d-legend .bulk button:hover { filter: brightness(1.12); }
+    #gengit3d-legend .date-filter { padding: 8px 12px; border-bottom: 1px solid var(--border); }
+    #gengit3d-legend .date-filter label { display: block; font: 10px monospace; color: var(--muted); margin-bottom: 4px; }
+    #gengit3d-legend .date-filter .row { display: flex; gap: 6px; align-items: center; }
+    #gengit3d-legend .date-filter input[type="date"] { flex: 1; background: var(--input); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 4px 6px; font: 11px monospace; outline: none; color-scheme: dark; }
+    #gengit3d-legend .date-filter input[type="date"]:focus { border-color: var(--accent); }
+    #gengit3d-legend .date-filter button { background: var(--btn); color: var(--btn-text); border: 1px solid var(--btn-border); border-radius: 4px; padding: 4px 8px; font: 10px monospace; cursor: pointer; white-space: nowrap; }
+    #gengit3d-legend .date-filter button:hover { filter: brightness(1.12); }
+    #gengit3d-legend .list { overflow-y: auto; flex: 1; padding: 4px 0; }
+    #gengit3d-legend .list .item { display: flex; align-items: center; gap: 6px; padding: 3px 12px; font: 11px monospace; cursor: pointer; }
+    #gengit3d-legend .list .item:hover { background: var(--input); }
+    #gengit3d-legend .list .item input[type="checkbox"] { margin: 0; accent-color: var(--accent); }
+    #gengit3d-legend .list .item .swatch { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
+    #gengit3d-legend .list .item .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+    #gengit3d-legend .list .item .count { color: var(--muted); font-size: 10px; }
+    #gengit3d-legend .list .item.hidden-branch .name { text-decoration: line-through; opacity: 0.5; }
+    #gengit3d-legend .list .item.hidden-branch .swatch { opacity: 0.3; }
+    #gengit3d-legend .empty { color: var(--muted); font: 11px monospace; padding: 12px; }
+
     /* commit details panel */
     #gengit3d-detail { position: fixed; top: 0; right: 0; height: 100%; width: 420px; max-width: 92vw; background: var(--panel); border-left: 1px solid var(--border); z-index: 7; display: flex; flex-direction: column; transform: translateX(100%); transition: transform .18s ease; box-shadow: -6px 0 24px #0004; }
     #gengit3d-detail.open { transform: translateX(0); }
@@ -75,12 +105,38 @@
     <label for="gengit3d-theme">theme</label>
     <select id="gengit3d-theme" title="colour theme (light + dark)"></select>
     <label title="rotate the view automatically"><input id="gengit3d-rotate" type="checkbox" /> rotate</label>
+    <button id="gengit3d-legend-toggle" title="show/hide branch legend">Branches</button>
   </div>
 
   <div id="gengit3d-stats">loading…</div>
   <div id="gengit3d-status"></div>
   <div id="gengit3d-help">drag: rotate · scroll: zoom · right-drag: pan · click a commit: details · hover: info</div>
   <div id="gengit3d-loading">loading gengit3d.graph.json …</div>
+
+  <aside id="gengit3d-legend">
+    <header>
+      <span class="h">branches</span>
+      <button id="gengit3d-legend-close" title="close">✕</button>
+    </header>
+    <div class="search">
+      <input id="gengit3d-legend-search" type="text" placeholder="filter branches…" spellcheck="false" />
+    </div>
+    <div class="bulk">
+      <button id="gengit3d-legend-all">All</button>
+      <button id="gengit3d-legend-none">None</button>
+      <button id="gengit3d-legend-top">Top 10</button>
+    </div>
+    <div class="date-filter">
+      <label>Filter by date</label>
+      <div class="row">
+        <input id="gengit3d-date-from" type="date" title="from date" />
+        <input id="gengit3d-date-to" type="date" title="to date" />
+        <button id="gengit3d-date-apply" title="apply date filter">Apply</button>
+        <button id="gengit3d-date-clear" title="clear date filter">Clear</button>
+      </div>
+    </div>
+    <div class="list" id="gengit3d-legend-list"><div class="empty">No graph loaded.</div></div>
+  </aside>
 
   <aside id="gengit3d-detail">
     <header>
@@ -153,6 +209,7 @@
         autoRotate: rotateEl.checked,
         onSelect: showCommitDetails,
       });
+      buildLegend(graph);
       if (label) setStatus(label);
     }
 
@@ -167,6 +224,119 @@
         setStatus(keep);
       }
     }
+
+    // ── branch legend ────────────────────────────────────────────────────────
+    const legend = document.getElementById('gengit3d-legend');
+    const legendList = document.getElementById('gengit3d-legend-list');
+    const legendSearch = document.getElementById('gengit3d-legend-search');
+    let branchVisibility = new Map(); // branchId -> bool
+
+    function openLegend() { legend.classList.add('open'); }
+    function closeLegend() { legend.classList.remove('open'); }
+    document.getElementById('gengit3d-legend-toggle').addEventListener('click', () => {
+        legend.classList.contains('open') ? closeLegend() : openLegend();
+    });
+    document.getElementById('gengit3d-legend-close').addEventListener('click', closeLegend);
+
+    function buildLegend(graph) {
+        branchVisibility = new Map();
+        const branches = [...graph.branches].sort((a, b) => b.commits - a.commits);
+        branches.forEach((b) => branchVisibility.set(b.id, true));
+        renderLegendList(graph, '');
+        updateBranchFilter();
+    }
+
+    function renderLegendList(graph, filter) {
+        const branches = [...graph.branches].sort((a, b) => b.commits - a.commits);
+        const q = filter.toLowerCase();
+        const filtered = q ? branches.filter((b) => b.name.toLowerCase().includes(q)) : branches;
+        if (!filtered.length) {
+            legendList.innerHTML = '<div class="empty">No branches match.</div>';
+            return;
+        }
+        legendList.innerHTML = filtered.map((b) => {
+            const visible = branchVisibility.get(b.id) !== false;
+            const colorHex = '#' + (b.color ?? 0x4f9dff).toString(16).padStart(6, '0');
+            return `<div class="item${visible ? '' : ' hidden-branch'}" data-branch="${b.id}">` +
+                `<input type="checkbox" ${visible ? 'checked' : ''} />` +
+                `<span class="swatch" style="background:${colorHex}"></span>` +
+                `<span class="name" title="${esc(b.name)}">${esc(b.name)}</span>` +
+                `<span class="count">${b.commits}</span></div>`;
+        }).join('');
+        // wire checkboxes
+        legendList.querySelectorAll('.item').forEach((el) => {
+            const bid = parseInt(el.dataset.branch, 10);
+            el.addEventListener('click', (e) => {
+                if (e.target.tagName === 'INPUT') return; // let the checkbox handle it
+                const cb = el.querySelector('input');
+                cb.checked = !cb.checked;
+                toggleBranch(bid, cb.checked);
+            });
+            el.querySelector('input').addEventListener('change', (e) => {
+                e.stopPropagation();
+                toggleBranch(bid, e.target.checked);
+            });
+        });
+    }
+
+    function toggleBranch(branchId, visible) {
+        branchVisibility.set(branchId, visible);
+        const el = legendList.querySelector(`.item[data-branch="${branchId}"]`);
+        if (el) el.classList.toggle('hidden-branch', !visible);
+        updateBranchFilter();
+    }
+
+    function updateBranchFilter() {
+        if (!current || !current.setBranchFilter) return;
+        const visible = new Set();
+        for (const [bid, v] of branchVisibility) if (v) visible.add(bid);
+        // if all visible, pass null (no filter)
+        const allVisible = visible.size === branchVisibility.size;
+        current.setBranchFilter(allVisible ? null : visible);
+    }
+
+    legendSearch.addEventListener('input', () => {
+        if (currentGraph) renderLegendList(currentGraph, legendSearch.value);
+    });
+    document.getElementById('gengit3d-legend-all').addEventListener('click', () => {
+        for (const [bid] of branchVisibility) branchVisibility.set(bid, true);
+        if (currentGraph) renderLegendList(currentGraph, legendSearch.value);
+        updateBranchFilter();
+    });
+    document.getElementById('gengit3d-legend-none').addEventListener('click', () => {
+        for (const [bid] of branchVisibility) branchVisibility.set(bid, false);
+        if (currentGraph) renderLegendList(currentGraph, legendSearch.value);
+        updateBranchFilter();
+    });
+    document.getElementById('gengit3d-legend-top').addEventListener('click', () => {
+        const branches = currentGraph ? [...currentGraph.branches].sort((a, b) => b.commits - a.commits) : [];
+        const top10 = new Set(branches.slice(0, 10).map((b) => b.id));
+        for (const [bid] of branchVisibility) branchVisibility.set(bid, top10.has(bid));
+        if (currentGraph) renderLegendList(currentGraph, legendSearch.value);
+        updateBranchFilter();
+    });
+
+    // ── date filter ──────────────────────────────────────────────────────────
+    const dateFrom = document.getElementById('gengit3d-date-from');
+    const dateTo = document.getElementById('gengit3d-date-to');
+    const dateApply = document.getElementById('gengit3d-date-apply');
+    const dateClear = document.getElementById('gengit3d-date-clear');
+
+    function applyDateFilter() {
+        if (!current || !current.setDateFilter) return;
+        const from = dateFrom.value ? new Date(dateFrom.value + 'T00:00:00').getTime() : null;
+        const to = dateTo.value ? new Date(dateTo.value + 'T23:59:59').getTime() : null;
+        current.setDateFilter(from, to);
+    }
+    function clearDateFilter() {
+        dateFrom.value = '';
+        dateTo.value = '';
+        if (current && current.setDateFilter) current.setDateFilter(null, null);
+    }
+    document.getElementById('gengit3d-date-apply').addEventListener('click', applyDateFilter);
+    dateClear.addEventListener('click', clearDateFilter);
+    dateFrom.addEventListener('change', applyDateFilter);
+    dateTo.addEventListener('change', applyDateFilter);
 
     // ── commit details ───────────────────────────────────────────────────────
     function colorizePatch(text) {

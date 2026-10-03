@@ -22,7 +22,7 @@ const RECORD_SEP = '\x1e'; // record separator
 export async function rawGitLog(repoDir, { max = 0 } = {}) {
     const args = [
         'log',
-        `--pretty=format:%H${FIELD_SEP}%P${FIELD_SEP}%an${FIELD_SEP}%ae${FIELD_SEP}%ad${FIELD_SEP}%s%x1e`,
+        `--pretty=format:%H${FIELD_SEP}%P${FIELD_SEP}%an${FIELD_SEP}%ae${FIELD_SEP}%ad${FIELD_SEP}%s${FIELD_SEP}%D%x1e`,
         '--date=iso-strict',
         '--topo-order',
     ];
@@ -46,13 +46,30 @@ export function parseGitLog(raw, repoDir = '') {
     let head = null;
 
     for (const rec of records) {
-        const [hash, parentsRaw, author, email, date, subject] = rec
+        const [hash, parentsRaw, author, email, date, subject, refsRaw] = rec
             .replace(/^\n+/, '')
             .split(FIELD_SEP)
             .map((s) => s.replace(/\n+$/, ''));
         if (!hash) continue;
         if (head === null) head = hash; // first row is HEAD
         const parents = (parentsRaw || '').split(/\s+/).filter(Boolean);
+        // extract branch name from refs (e.g. "HEAD -> dev, origin/dev" -> "dev")
+        const refs = (refsRaw || '').split(',').map((r) => r.trim()).filter(Boolean);
+        let branchName = null;
+        for (const r of refs) {
+            const m = r.match(/HEAD\s*->\s*(\S+)/);
+            if (m) { branchName = m[1]; break; }
+        }
+        if (!branchName) {
+            for (const r of refs) {
+                if (r.startsWith('origin/') && !r.endsWith('HEAD')) { branchName = r.slice(7); break; }
+            }
+        }
+        if (!branchName) {
+            for (const r of refs) {
+                if (r !== 'HEAD' && !r.startsWith('tag:')) { branchName = r.replace(/^refs\//, ''); break; }
+            }
+        }
         const node = {
             id: hash,
             short: hash.slice(0, 7),
@@ -61,6 +78,7 @@ export function parseGitLog(raw, repoDir = '') {
             date,
             subject: subject || '(no subject)',
             parents,
+            branchName,
             // layout fields filled later:
             depth: -1,
             branch: null,
@@ -139,11 +157,11 @@ export function parseGitLog(raw, repoDir = '') {
     const branchMap = new Map();
     for (const n of nodes) {
         if (!branchMap.has(n.branch)) {
-            branchMap.set(n.branch, { id: n.branch, color: (branchColor[n.branch] ?? 0) % 6, commits: 0, tip: null });
+            branchMap.set(n.branch, { id: n.branch, name: n.branchName || n.branch, color: (branchColor[n.branch] ?? 0) % 6, commits: 0, tip: null });
         }
         const b = branchMap.get(n.branch);
         b.commits++;
-        if (!b.tip) b.tip = n.id; // first assigned (closest to tip)
+        if (!b.tip) { b.tip = n.id; if (n.branchName) b.name = n.branchName; }
     }
     const branches = [...branchMap.values()];
 
