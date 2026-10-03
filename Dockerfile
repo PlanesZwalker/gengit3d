@@ -11,15 +11,20 @@ RUN npm ci --omit=dev
 COPY bin/ ./bin/
 COPY src/ ./src/
 COPY index.html ./
+COPY entrypoint.sh ./
 
-# gengit3d.graph.json is generated at build time via:
-#   node bin/gengit3d.js parse --repo /path/to/repo
-# For now, copy the pre-generated one if present, else generate at runtime.
+# gengit3d.graph.json is gitignored (7 MB generated artifact) and NOT baked in.
+# entrypoint.sh parses the mounted repo (GENGIT3D_REPO, default /repo) at startup
+# so the viewer is functional on a clean checkout. A pre-generated graph, if present
+# in the build context, is copied as a fallback.
 COPY gengit3d.graph.json* ./
+
+RUN chmod +x entrypoint.sh
 
 EXPOSE 8080
 
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s \
-  CMD wget -qO- http://localhost:8080/ || exit 1
+# Healthy only once a graph is actually served (not just the HTML shell).
+HEALTHCHECK --interval=30s --timeout=3s --start-period=15s \
+  CMD wget -qO- http://localhost:8080/gengit3d.graph.json >/dev/null 2>&1 || exit 1
 
-CMD ["node", "bin/gengit3d.js", "serve", "--port", "8080"]
+ENTRYPOINT ["./entrypoint.sh"]
