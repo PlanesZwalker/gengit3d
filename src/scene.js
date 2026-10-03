@@ -146,15 +146,13 @@ export function renderGraph(container, graph) {
         stats.textContent = `commits: ${graph.nodes.length} | branches: ${graph.branches.length} | edges: ${graph.edges.length} | head: ${graph.head?.slice(0, 7) ?? '?'}`;
     }
 
+    // Expose handles for debugging/inspection from the browser dev tools.
+    // NOTE: this runs in the browser — never reference `process.env` here
+    // (Node globals are undefined in a page and throw a ReferenceError).
+    window.__gengit3d = { scene, camera, renderer, controls };
+
     return {
         scene, camera, renderer, controls,
         dispose() { cancelAnimationFrame(raf); controls.dispose(); renderer.dispose(); },
     };
-}
-
-// Expose for debugging/inspection (dev only)
-if (process.env.NODE_ENV !== 'production') {
-    window.__gengit3d_scene = scene;
-    window.__gengit3d_renderer = renderer;
-    window.__gengit3d_camera = camera;
 }
