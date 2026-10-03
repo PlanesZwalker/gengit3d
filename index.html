@@ -14,6 +14,7 @@
       --muted: #8b93a7; --accent: #4f9dff; --input: #0d0e12;
       --btn: #2a3550; --btn-border: #3a4a70; --btn-text: #dbe6ff;
       --overlay: #000000aa; --err: #e05c75; --busy: #f2c14e;
+      --diff-add: #7ee787; --diff-del: #ff7b72; --diff-hunk: #79c0ff;
     }
     html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; overflow: hidden; transition: background .15s, color .15s; }
     #app { position: fixed; inset: 0; }
@@ -23,8 +24,8 @@
     .err { color: var(--err); }
     #gengit3d-bar { position: fixed; top: 10px; left: 50%; transform: translateX(-50%); z-index: 6; display: flex; gap: 6px; align-items: center; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 6px; box-shadow: 0 4px 18px #0004; }
     #gengit3d-bar input, #gengit3d-bar select { background: var(--input); color: var(--text); border: 1px solid var(--border); border-radius: 5px; padding: 6px 9px; font: 12px monospace; outline: none; }
-    #gengit3d-bar input#gengit3d-repo { width: 320px; }
-    #gengit3d-bar input#gengit3d-depth { width: 60px; }
+    #gengit3d-bar input#gengit3d-repo { width: 300px; }
+    #gengit3d-bar input#gengit3d-depth { width: 56px; }
     #gengit3d-bar input:focus, #gengit3d-bar select:focus { border-color: var(--accent); }
     #gengit3d-bar button { background: var(--btn); color: var(--btn-text); border: 1px solid var(--btn-border); border-radius: 5px; padding: 6px 12px; font: 12px monospace; cursor: pointer; }
     #gengit3d-bar button:hover { filter: brightness(1.12); }
@@ -33,6 +34,32 @@
     #gengit3d-status { position: fixed; top: 58px; left: 50%; transform: translateX(-50%); z-index: 6; font: 11px monospace; color: var(--muted); background: var(--overlay); padding: 4px 10px; border-radius: 5px; max-width: 90vw; }
     #gengit3d-status.busy { color: var(--busy); }
     #gengit3d-status.err { color: var(--err); }
+
+    /* CSS2D timeline tick labels */
+    .gengit3d-tick { font: 11px monospace; color: var(--muted); background: var(--overlay); padding: 1px 6px; border-radius: 4px; border: 1px solid var(--border); white-space: nowrap; }
+
+    /* commit details panel */
+    #gengit3d-detail { position: fixed; top: 0; right: 0; height: 100%; width: 420px; max-width: 92vw; background: var(--panel); border-left: 1px solid var(--border); z-index: 7; display: flex; flex-direction: column; transform: translateX(100%); transition: transform .18s ease; box-shadow: -6px 0 24px #0004; }
+    #gengit3d-detail.open { transform: translateX(0); }
+    #gengit3d-detail header { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+    #gengit3d-detail header .h { font: 12px monospace; color: var(--muted); }
+    #gengit3d-detail header button { background: transparent; color: var(--text); border: 1px solid var(--border); border-radius: 5px; padding: 3px 9px; font: 12px monospace; cursor: pointer; }
+    #gengit3d-detail .body { overflow: auto; padding: 12px; flex: 1; }
+    #gengit3d-detail h2 { font: 14px/1.4 monospace; margin: 0 0 8px; color: var(--text); }
+    #gengit3d-detail .meta { font: 11px/1.7 monospace; color: var(--muted); margin-bottom: 10px; }
+    #gengit3d-detail .meta b { color: var(--text); font-weight: 600; }
+    #gengit3d-detail .stat { font: 11px monospace; margin: 8px 0; color: var(--text); }
+    #gengit3d-detail .files { list-style: none; padding: 0; margin: 6px 0 12px; }
+    #gengit3d-detail .files li { font: 11px monospace; display: flex; gap: 8px; padding: 2px 0; border-bottom: 1px dashed var(--border); }
+    #gengit3d-detail .files .p { flex: 1; word-break: break-all; color: var(--text); }
+    #gengit3d-detail .files .a { color: var(--diff-add); }
+    #gengit3d-detail .files .d { color: var(--diff-del); }
+    #gengit3d-detail pre.diff { font: 11px/1.45 monospace; white-space: pre-wrap; word-break: break-word; margin: 0; padding: 8px; background: var(--input); border: 1px solid var(--border); border-radius: 6px; max-height: 46vh; overflow: auto; }
+    #gengit3d-detail pre.diff .add { color: var(--diff-add); }
+    #gengit3d-detail pre.diff .del { color: var(--diff-del); }
+    #gengit3d-detail pre.diff .hunk { color: var(--diff-hunk); }
+    #gengit3d-detail .msg { font: 11px/1.6 monospace; white-space: pre-wrap; color: var(--text); background: var(--input); border: 1px solid var(--border); border-radius: 6px; padding: 8px; margin-bottom: 10px; }
+    #gengit3d-detail .empty { color: var(--muted); font: 12px monospace; }
   </style>
 </head>
 <body>
@@ -47,12 +74,21 @@
     <button id="gengit3d-render">Render</button>
     <label for="gengit3d-theme">theme</label>
     <select id="gengit3d-theme" title="colour theme (light + dark)"></select>
+    <label title="rotate the view automatically"><input id="gengit3d-rotate" type="checkbox" /> rotate</label>
   </div>
 
   <div id="gengit3d-stats">loading…</div>
   <div id="gengit3d-status"></div>
-  <div id="gengit3d-help">drag: rotate · scroll: zoom · right-drag: pan · hover node: commit info</div>
+  <div id="gengit3d-help">drag: rotate · scroll: zoom · right-drag: pan · click a commit: details · hover: info</div>
   <div id="gengit3d-loading">loading gengit3d.graph.json …</div>
+
+  <aside id="gengit3d-detail">
+    <header>
+      <span class="h">commit details</span>
+      <button id="gengit3d-detail-close" title="close">✕</button>
+    </header>
+    <div class="body" id="gengit3d-detail-body"><div class="empty">Click a commit sphere to see its details.</div></div>
+  </aside>
 
   <script type="importmap">
   {
@@ -75,9 +111,13 @@
     const depthEl = document.getElementById('gengit3d-depth');
     const renderBtn = document.getElementById('gengit3d-render');
     const themeSel = document.getElementById('gengit3d-theme');
+    const rotateEl = document.getElementById('gengit3d-rotate');
+    const detail = document.getElementById('gengit3d-detail');
+    const detailBody = document.getElementById('gengit3d-detail-body');
 
     let current = null;       // active scene handle
     let currentGraph = null;  // last rendered graph (for instant theme switching)
+    let currentSource = null; // { repo } — where to fetch commit details
     let theme = localStorage.getItem('gengit3d.theme') || DEFAULT_THEME;
     if (!THEMES[theme]) theme = DEFAULT_THEME;
 
@@ -96,15 +136,23 @@
       r.setProperty('--btn-border', ui.btnBorder); r.setProperty('--btn-text', ui.btnText);
       r.setProperty('--overlay', ui.overlay); r.setProperty('--err', ui.err);
       r.setProperty('--busy', ui.busy);
+      if (ui.diffAdd) r.setProperty('--diff-add', ui.diffAdd);
+      if (ui.diffDel) r.setProperty('--diff-del', ui.diffDel);
+      if (ui.diffHunk) r.setProperty('--diff-hunk', ui.diffHunk);
       document.documentElement.setAttribute('data-theme', name);
     }
 
-    function draw(graph, label) {
+    function draw(graph, label, source) {
       currentGraph = graph;
+      currentSource = source || graph.source || (graph.repoDir ? { repo: graph.repoDir } : null);
       if (current && current.dispose) current.dispose();
       app.innerHTML = '';
       loading.style.display = 'none';
-      current = renderGraph(app, graph, theme);
+      current = renderGraph(app, graph, {
+        themeName: theme,
+        autoRotate: rotateEl.checked,
+        onSelect: showCommitDetails,
+      });
       if (label) setStatus(label);
     }
 
@@ -115,17 +163,49 @@
       applyChrome(name);
       if (rerender && currentGraph) {
         const keep = statusEl.textContent;
-        draw(currentGraph, null);   // scene colours live in the WebGL context -> rebuild
+        draw(currentGraph, null, currentSource);   // scene colours live in the WebGL context -> rebuild
         setStatus(keep);
       }
     }
 
-    // populate the theme <select>
-    themeSel.innerHTML = Object.entries(THEMES)
-      .map(([k, t]) => `<option value="${k}">${esc(t.label)}</option>`).join('');
-    themeSel.value = theme;
-    themeSel.addEventListener('change', () => setTheme(themeSel.value));
-    applyChrome(theme);
+    // ── commit details ───────────────────────────────────────────────────────
+    function colorizePatch(text) {
+      return esc(text).split('\n').map((line) => {
+        if (line.startsWith('+')) return '<span class="add">' + line + '</span>';
+        if (line.startsWith('-')) return '<span class="del">' + line + '</span>';
+        if (line.startsWith('@@')) return '<span class="hunk">' + line + '</span>';
+        return line;
+      }).join('\n');
+    }
+
+    function openDetail() { detail.classList.add('open'); }
+    document.getElementById('gengit3d-detail-close').addEventListener('click', () => detail.classList.remove('open'));
+
+    async function showCommitDetails(node, ctx) {
+      openDetail();
+      const repo = (ctx && ctx.repo) || (currentSource && currentSource.repo);
+      detailBody.innerHTML = '<div class="empty">loading ' + esc(node.short) + ' …</div>';
+      if (!repo) { detailBody.innerHTML = '<div class="empty">no repo source — re-render from a path/URL.</div>'; return; }
+      try {
+        const qs = 'repo=' + encodeURIComponent(repo) + '&hash=' + encodeURIComponent(node.id) + '&maxPatch=60000';
+        const res = await fetch('/api/commit?' + qs, { cache: 'no-store' });
+        const d = await res.json();
+        if (!res.ok) throw new Error(d.error || ('HTTP ' + res.status));
+        const files = (d.files || []).map((f) => `<li><span class="a">+${f.added ?? '–'}</span><span class="d">-${f.deleted ?? '–'}</span><span class="p">${esc(f.path)}</span></li>`).join('');
+        detailBody.innerHTML =
+          `<h2>${esc(d.short)} — ${esc(d.subject)}</h2>` +
+          `<div class="meta"><b>author</b> ${esc(d.author)} &lt;${esc(d.email)}&gt;<br>` +
+          `<b>date</b> ${esc(d.date)}<br>` +
+          (d.committer && d.committer !== d.author ? `<b>committer</b> ${esc(d.committer)}<br>` : '') +
+          `<b>parents</b> ${d.parents.length ? d.parents.map((p) => esc(p.slice(0, 10))).join(', ') : '(root)'}</div>` +
+          (d.body ? `<div class="msg">${esc(d.body)}</div>` : '') +
+          `<div class="stat">${d.stats.files} file(s) · <span style="color:var(--diff-add)">+${d.stats.added}</span> / <span style="color:var(--diff-del)">-${d.stats.deleted}</span></div>` +
+          `<ul class="files">${files || '<li class="p">(no files — merge commit?)</li>'}</ul>` +
+          (d.patch ? `<pre class="diff">${colorizePatch(d.patch)}</pre>` + (d.patchTruncated ? '<div class="empty">… patch truncated</div>' : '') : '');
+      } catch (e) {
+        detailBody.innerHTML = '<div class="empty err">error: ' + esc(e.message) + '</div>';
+      }
+    }
 
     // ── data ────────────────────────────────────────────────────────────────
     async function fetchGraph(endpoint, qs, label) {
@@ -135,7 +215,7 @@
         const res = await fetch(endpoint + '?' + qs, { cache: 'no-store' });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
-        draw(data, label(data));
+        draw(data, label(data), data.source);
       } catch (e) {
         setStatus('error: ' + e.message, 'err');
         loading.innerHTML = '<span class="err">' + esc(e.message) + '</span>';
@@ -160,6 +240,14 @@
 
     renderBtn.addEventListener('click', renderFromInput);
     input.addEventListener('keydown', (e) => { if (e.key === 'Enter') renderFromInput(); });
+    rotateEl.addEventListener('change', () => { if (current) current.setAutoRotate(rotateEl.checked); });
+
+    // theme <select>
+    themeSel.innerHTML = Object.entries(THEMES)
+      .map(([k, t]) => `<option value="${k}">${esc(t.label)}</option>`).join('');
+    themeSel.value = theme;
+    themeSel.addEventListener('change', () => setTheme(themeSel.value));
+    applyChrome(theme);
 
     // Populate the datalist with git repos discoverable server-side.
     (async function loadRepos() {

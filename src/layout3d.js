@@ -61,6 +61,16 @@ export function layoutGraph(
 
     const maxDepth = graph.nodes.reduce((m, n) => Math.max(m, n.depth), 0) || 1;
 
+    // y axis: prefer the REAL commit DATE so the vertical axis is a true,
+    // monotonic timeline. Fall back to topological depth when dates are absent.
+    const times = graph.nodes
+        .map((n) => Date.parse(n.date))
+        .filter((t) => Number.isFinite(t));
+    let tMin = Infinity, tMax = -Infinity;
+    for (const t of times) { if (t < tMin) tMin = t; if (t > tMax) tMax = t; }
+    const useTime = times.length === graph.nodes.length && tMax > tMin;
+    graph.axis = { mode: useTime ? 'time' : 'depth', tMin, tMax };
+
     for (const n of graph.nodes) {
         const p = posOf.get(n.branch) || { angle: 0, radius: radiusMinor };
         const h1 = hash01(n.id);
@@ -71,8 +81,12 @@ export function layoutGraph(
         n.radius = radius;
         n.x = Math.cos(angle) * radius;
         n.z = Math.sin(angle) * radius;
-        // history grows upward: root commits at the bottom, tips at the top
-        n.y = (n.depth / maxDepth - 0.5) * height;
+        // history grows upward: oldest at the bottom, newest at the top
+        if (useTime) {
+            n.y = ((Date.parse(n.date) - tMin) / (tMax - tMin) - 0.5) * height;
+        } else {
+            n.y = (n.depth / maxDepth - 0.5) * height;
+        }
         n.lane = n.lane ?? 0; // legacy field kept for compatibility
     }
 

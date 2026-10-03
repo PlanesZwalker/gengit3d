@@ -1,21 +1,29 @@
 // scene.js — three.js scene for the git commit graph.
 // Renders commits as solid spheres (colored by branch) and parent links as
 // tube edges, so the cloud reads as volumetric matter rather than a flat plane.
+// Adds a dated timeline axis and click-to-inspect selection.
 // Runs in the browser only (imports 'three', a browser/ESM build).
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 import { getTheme } from './themes.js';
 
 /**
  * Build and render the graph into a container element.
  * @param {HTMLElement} container
  * @param {object} graph  output of gitlog.parseGitLog (post-layout)
- * @param {string} [themeName]  key into THEMES (defaults to midnight)
+ * @param {object|string} [opts]  { themeName, onSelect, autoRotate, timeline }
+ *                                (a bare string is accepted as themeName)
  */
-export function renderGraph(container, graph, themeName) {
-    const theme = getTheme(themeName);
+export function renderGraph(container, graph, opts) {
+    if (typeof opts === 'string') opts = { themeName: opts };
+    opts = opts || {};
+    const theme = getTheme(opts.themeName);
     const PALETTE = theme.palette;
+    const showTimeline = opts.timeline !== false;
+    const onSelect = typeof opts.onSelect === 'function' ? opts.onSelect : null;
+
     const width = container.clientWidth || 800;
     const height = container.clientHeight || 600;
 
@@ -47,10 +55,16 @@ export function renderGraph(container, graph, themeName) {
     renderer.setSize(width, height);
     container.appendChild(renderer.domElement);
 
+    // CSS2D overlay for crisp HTML timeline labels (respects theme via CSS)
+    const labelRenderer = new CSS2DRenderer();
+    labelRenderer.setSize(width, height);
+    Object.assign(labelRenderer.domElement.style, { position: 'absolute', top: '0', left: '0', pointerEvents: 'none' });
+    container.appendChild(labelRenderer.domElement);
+
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.08;
-    controls.autoRotate = true;      // slow orbit reveals the volume
+    controls.autoRotate = !!opts.autoRotate;   // off by default so the timeline stays put
     controls.autoRotateSpeed = 0.45;
     controls.target.copy(center);
 
@@ -143,9 +157,18 @@ export function renderGraph(container, graph, themeName) {
     const pos = new THREE.Vector3();
     const scl = new THREE.Vector3();
     const idq = new THREE.Quaternion();
+    const baseRadius = (n) => 2.2 + Math.min(childCount.get(n.id) || 0, 6) * 0.5;
+    const writeNodeMatrix = (i) => {
+        const n = graph.nodes[i];
+        const r = baseRadius(n) * (i === selectedIndex ? 1.7 : 1);
+        pos.set(n.x, n.y, n.z);
+        scl.set(r, r, r);
+        m.compose(pos, idq, scl);
+        nodes.setMatrixAt(i, m);
+    };
+    let selectedIndex = -1;
     graph.nodes.forEach((n, i) => {
-        const hub = childCount.get(n.id) || 0;
-        const r = 2.2 + Math.min(hub, 6) * 0.5;
+        const r = baseRadius(n);
         pos.set(n.x, n.y, n.z);
         scl.set(r, r, r);
         m.compose(pos, idq, scl);
@@ -157,7 +180,53 @@ export function renderGraph(container, graph, themeName) {
     nodes.instanceColor.needsUpdate = true;
     scene.add(nodes);
 
-    // raycaster for hover tooltips
+    // ---- selection marker (halo around the clicked commit) ----
+    const selMat = new THREE.MeshBasicMaterial({ color: theme.selection, transparent: true, opacity: 0.85, wireframe: true });
+    const selection = new THREE.Mesh(new THREE.SphereGeometry(1, 16, 12), selMat);
+    selection.visible = false;
+    scene.add(selection);
+
+    // ---- timeline axis (vertical, history grows upward) with dated ticks ----
+    let yMin = Infinity, yMax = -Infinity;
+    for (const n of graph.nodes) { if (n.y < yMin) yMin = n.y; if (n.y > yMax) yMax = n.y; }
+    if (!isFinite(yMin)) { yMin = -1; yMax = 1; }
+    const axisGroup = new THREE.Group();
+    if (showTimeline) {
+        const axisGeo = new THREE.BufferGeometry().setFromPoints([
+            new THREE.Vector3(0, yMin, 0), new THREE.Vector3(0, yMax, 0),
+        ]);
+        axisGroup.add(new THREE.Line(axisGeo, new THREE.LineBasicMaterial({ color: theme.axis, transparent: true, opacity: 0.9 })));
+
+        // sort nodes by y to map a tick to the nearest commit's date
+        const byY = [...graph.nodes].filter((n) => n.date).sort((p, r) => p.y - r.y);
+        const fmtDate = (iso) => (iso || '').slice(0, 10);
+        const TICKS = 7;
+        const tickGeo = whiteAttr(new THREE.SphereGeometry(1.4, 8, 6));
+        const tickMat = new THREE.MeshBasicMaterial({ color: theme.axis });
+        const ticks = new THREE.InstancedMesh(tickGeo, tickMat, TICKS);
+        let ti = 0;
+        for (let k = 0; k < TICKS; k++) {
+            const y = yMin + ((yMax - yMin) * k) / (TICKS - 1);
+            pos.set(0, y, 0); scl.set(1, 1, 1);
+            m.compose(pos, idq, scl);
+            ticks.setMatrixAt(ti++, m);
+            // nearest commit by y -> its date
+            let near = byY[0];
+            for (const n of byY) { if (Math.abs(n.y - y) < Math.abs(near.y - y)) near = n; }
+            const el = document.createElement('div');
+            el.className = 'gengit3d-tick';
+            el.textContent = fmtDate(near && near.date);
+            const label = new CSS2DObject(el);
+            label.position.set(0, y, 0);
+            axisGroup.add(label);
+        }
+        ticks.count = ti;
+        ticks.instanceMatrix.needsUpdate = true;
+        axisGroup.add(ticks);
+        scene.add(axisGroup);
+    }
+
+    // raycaster for hover tooltips + click selection
     const raycaster = new THREE.Raycaster();
     const mouse = new THREE.Vector2();
     const tooltip = document.getElementById('gengit3d-tooltip') || (() => {
@@ -172,7 +241,7 @@ export function renderGraph(container, graph, themeName) {
     tooltip.style.color = theme.ui.tooltipText;
     tooltip.style.border = '1px solid ' + theme.ui.border;
 
-    function onMove(ev) {
+    function pick(ev) {
         const rect = renderer.domElement.getBoundingClientRect();
         mouse.x = ((ev.clientX - rect.left) / rect.width) * 2 - 1;
         mouse.y = -((ev.clientY - rect.top) / rect.height) * 2 + 1;
@@ -180,20 +249,54 @@ export function renderGraph(container, graph, themeName) {
         const hits = raycaster.intersectObject(nodes, false);
         if (hits.length) {
             const idx = hits[0].instanceId;
-            const n = graph.nodes[idx];
-            if (n) {
-                tooltip.style.display = 'block';
-                tooltip.style.left = (ev.clientX + 12) + 'px';
-                tooltip.style.top = (ev.clientY + 12) + 'px';
-                tooltip.textContent = `${n.short} ${n.author}: ${n.subject.slice(0, 60)}`;
-                document.body.style.cursor = 'pointer';
-                return;
-            }
+            return graph.nodes[idx] ? { idx, node: graph.nodes[idx] } : null;
+        }
+        return null;
+    }
+
+    function onMove(ev) {
+        const hit = pick(ev);
+        if (hit) {
+            tooltip.style.display = 'block';
+            tooltip.style.left = (ev.clientX + 12) + 'px';
+            tooltip.style.top = (ev.clientY + 12) + 'px';
+            tooltip.textContent = `${hit.node.short} ${hit.node.author}: ${hit.node.subject.slice(0, 60)}`;
+            document.body.style.cursor = 'pointer';
+            return;
         }
         tooltip.style.display = 'none';
         document.body.style.cursor = 'default';
     }
     renderer.domElement.addEventListener('mousemove', onMove);
+
+    function select(idx) {
+        selectedIndex = idx;
+        if (idx < 0) {
+            selection.visible = false;
+        } else {
+            const n = graph.nodes[idx];
+            selection.visible = true;
+            selection.position.set(n.x, n.y, n.z);
+            const rr = baseRadius(n) * 2.4;
+            selection.scale.set(rr, rr, rr);
+            writeNodeMatrix(idx);
+            nodes.instanceMatrix.needsUpdate = true;
+        }
+    }
+
+    function onClick(ev) {
+        const hit = pick(ev);
+        if (!hit) return;
+        select(hit.idx);
+        if (onSelect) onSelect(hit.node, { repo: graph.source?.repo || graph.repoDir || null });
+    }
+    // distinguish a click from an orbit drag
+    let downX = 0, downY = 0;
+    renderer.domElement.addEventListener('pointerdown', (ev) => { downX = ev.clientX; downY = ev.clientY; });
+    renderer.domElement.addEventListener('pointerup', (ev) => {
+        if (Math.abs(ev.clientX - downX) > 4 || Math.abs(ev.clientY - downY) > 4) return; // was a drag
+        onClick(ev);
+    });
 
     // resize
     function onResize() {
@@ -202,6 +305,7 @@ export function renderGraph(container, graph, themeName) {
         camera.aspect = w / h;
         camera.updateProjectionMatrix();
         renderer.setSize(w, h);
+        labelRenderer.setSize(w, h);
     }
     window.addEventListener('resize', onResize);
 
@@ -211,6 +315,7 @@ export function renderGraph(container, graph, themeName) {
         raf = requestAnimationFrame(animate);
         controls.update();
         renderer.render(scene, camera);
+        labelRenderer.render(scene, camera);
     }
     animate();
 
@@ -220,13 +325,17 @@ export function renderGraph(container, graph, themeName) {
         stats.textContent = `commits: ${graph.nodes.length} | branches: ${graph.branches.length} | edges: ${graph.edges.length} | head: ${graph.head?.slice(0, 7) ?? '?'}`;
     }
 
+    const api = {
+        scene, camera, renderer, controls, nodes, edges, labelRenderer,
+        theme: opts.themeName || 'midnight',
+        select,
+        setAutoRotate(on) { controls.autoRotate = !!on; },
+        toggleTimeline(on) { axisGroup.visible = !!on; },
+        dispose() { cancelAnimationFrame(raf); controls.dispose(); renderer.dispose(); },
+    };
     // Expose handles for debugging/inspection from the browser dev tools.
     // NOTE: this runs in the browser — never reference `process.env` here
     // (Node globals are undefined in a page and throw a ReferenceError).
-    window.__gengit3d = { scene, camera, renderer, controls, nodes, edges, theme: themeName || 'midnight' };
-
-    return {
-        scene, camera, renderer, controls, theme: themeName || 'midnight',
-        dispose() { cancelAnimationFrame(raf); controls.dispose(); renderer.dispose(); },
-    };
+    window.__gengit3d = api;
+    return api;
 }
