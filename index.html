@@ -11,15 +11,37 @@
     #app { position: fixed; inset: 0; }
     #gengit3d-stats { position: fixed; top: 10px; left: 10px; font: 12px monospace; background: #000a; padding: 6px 10px; border-radius: 6px; z-index: 5; }
     #gengit3d-help { position: fixed; bottom: 10px; left: 10px; font: 11px monospace; color: #888; z-index: 5; }
-    #gengit3d-loading { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; font: 16px monospace; color: #888; z-index: 4; }
+    #gengit3d-loading { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; font: 16px monospace; color: #888; z-index: 4; text-align: center; padding: 0 20px; }
     .err { color: #e05c75; }
+    #gengit3d-bar { position: fixed; top: 10px; left: 50%; transform: translateX(-50%); z-index: 6; display: flex; gap: 6px; align-items: center; background: #16171c; border: 1px solid #2a2c36; border-radius: 8px; padding: 6px; box-shadow: 0 4px 18px #0008; }
+    #gengit3d-bar input { width: 340px; background: #0d0e12; color: #e0e0e0; border: 1px solid #2a2c36; border-radius: 5px; padding: 6px 9px; font: 12px monospace; outline: none; }
+    #gengit3d-bar input:focus { border-color: #4f9dff; }
+    #gengit3d-bar input#gengit3d-depth { width: 66px; }
+    #gengit3d-bar button { background: #2a3550; color: #dbe6ff; border: 1px solid #3a4a70; border-radius: 5px; padding: 6px 12px; font: 12px monospace; cursor: pointer; }
+    #gengit3d-bar button:hover { background: #35436a; }
+    #gengit3d-bar button:disabled { opacity: .5; cursor: default; }
+    #gengit3d-bar label { font: 11px monospace; color: #8b93a7; }
+    #gengit3d-status { position: fixed; top: 58px; left: 50%; transform: translateX(-50%); z-index: 6; font: 11px monospace; color: #9aa4bd; background: #000a; padding: 4px 10px; border-radius: 5px; max-width: 90vw; }
+    #gengit3d-status.busy { color: #f2c14e; }
+    #gengit3d-status.err { color: #e05c75; }
   </style>
 </head>
 <body>
   <div id="app"></div>
+
+  <div id="gengit3d-bar">
+    <input id="gengit3d-repo" type="text" spellcheck="false" list="gengit3d-repos"
+           placeholder="repo path (/repos/x, C:\path) or git URL (https://…)" />
+    <datalist id="gengit3d-repos"></datalist>
+    <label for="gengit3d-depth">depth</label>
+    <input id="gengit3d-depth" type="number" min="0" value="500" title="shallow clone depth (URL only, 0 = full)" />
+    <button id="gengit3d-render">Render</button>
+  </div>
+
   <div id="gengit3d-stats">loading…</div>
+  <div id="gengit3d-status"></div>
   <div id="gengit3d-help">drag: rotate · scroll: zoom · right-drag: pan · hover node: commit info</div>
-  <div id="gengit3d-loading">fetching gengit3d.graph.json …</div>
+  <div id="gengit3d-loading">loading gengit3d.graph.json …</div>
 
   <script type="importmap">
   {
@@ -32,23 +54,87 @@
 
   <script type="module">
     import { renderGraph } from './src/scene.js';
+
     const app = document.getElementById('app');
     const loading = document.getElementById('gengit3d-loading');
+    const stats = document.getElementById('gengit3d-stats');
+    const statusEl = document.getElementById('gengit3d-status');
+    const input = document.getElementById('gengit3d-repo');
+    const depthEl = document.getElementById('gengit3d-depth');
+    const renderBtn = document.getElementById('gengit3d-render');
 
-    async function boot() {
-      let graph;
+    let current = null; // active scene handle
+
+    const isUrl = (s) => /^(https?:\/\/|git:\/\/|ssh:\/\/|git@[\w.-]+:|file:\/\/)/i.test(s.trim());
+    const setStatus = (msg, kind = '') => { statusEl.textContent = msg; statusEl.className = kind; };
+    const esc = (s) => String(s).replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
+
+    function draw(graph, label) {
+      if (current && current.dispose) current.dispose();
+      app.innerHTML = '';
+      loading.style.display = 'none';
+      current = renderGraph(app, graph);
+      if (label) setStatus(label);
+    }
+
+    async function fetchGraph(endpoint, qs, label) {
+      setStatus('loading…', 'busy');
+      renderBtn.disabled = true;
+      try {
+        const res = await fetch(endpoint + '?' + qs, { cache: 'no-store' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+        draw(data, label(data));
+      } catch (e) {
+        setStatus('error: ' + e.message, 'err');
+        loading.innerHTML = '<span class="err">' + esc(e.message) + '</span>';
+        loading.style.display = 'flex';
+      } finally {
+        renderBtn.disabled = false;
+      }
+    }
+
+    async function renderFromInput() {
+      const v = input.value.trim();
+      if (!v) { setStatus('enter a repo path or git URL', 'err'); return; }
+      if (isUrl(v)) {
+        const depth = parseInt(depthEl.value, 10) || 0;
+        await fetchGraph('/api/clone', 'url=' + encodeURIComponent(v) + '&depth=' + depth,
+          (d) => `cloned ${d.source.url} → ${d.nodes.length} commits, ${d.branches.length} branches`);
+      } else {
+        await fetchGraph('/api/graph', 'repo=' + encodeURIComponent(v),
+          (d) => `${d.source.repo} → ${d.nodes.length} commits, ${d.branches.length} branches`);
+      }
+    }
+
+    renderBtn.addEventListener('click', renderFromInput);
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') renderFromInput(); });
+
+    // Populate the datalist with git repos discoverable server-side.
+    (async function loadRepos() {
+      try {
+        const res = await fetch('/api/repos', { cache: 'no-store' });
+        const { repos } = await res.json();
+        const dl = document.getElementById('gengit3d-repos');
+        dl.innerHTML = (repos || []).map((r) => `<option value="${esc(r)}"></option>`).join('');
+        if (repos && repos.length) input.setAttribute('placeholder', `repo path or git URL — e.g. ${repos[0]}`);
+      } catch { /* discovery is best-effort */ }
+    })();
+
+    // Boot: load the server-side graph (generated by the entrypoint), else prompt.
+    (async function boot() {
       try {
         const res = await fetch('./gengit3d.graph.json', { cache: 'no-store' });
         if (!res.ok) throw new Error('HTTP ' + res.status);
-        graph = await res.json();
+        const graph = await res.json();
+        draw(graph, `default graph: ${graph.nodes.length} commits, ${graph.branches.length} branches`);
       } catch (e) {
-        loading.innerHTML = '<span class="err">failed to load gengit3d.graph.json — run `node bin/gengit3d.js parse` first.<br>' + e.message + '</span>';
-        return;
+        loading.innerHTML = '<span class="err">no gengit3d.graph.json yet.<br>' +
+          'Enter a repo path or git URL above and press Render.<br>' + esc(e.message) + '</span>';
+        stats.textContent = 'no graph';
+        setStatus('ready — enter a repo path or git URL', '');
       }
-      loading.style.display = 'none';
-      renderGraph(app, graph);
-    }
-    boot();
+    })();
   </script>
 </body>
 </html>
