@@ -109,6 +109,7 @@ export function renderGraph(container, graph, opts) {
     );
 
     // ---- edges as tubes (real geometry, catches light -> matter) ----
+    // Two meshes: visible (opacity 1.0) and hidden (opacity 0.1) for filtering
     const edgeGroup = new THREE.Group();
     const up = new THREE.Vector3(0, 1, 0);
     const a = new THREE.Vector3();
@@ -118,12 +119,16 @@ export function renderGraph(container, graph, opts) {
     const q = new THREE.Quaternion();
     const m = new THREE.Matrix4();
     const edgeGeo = whiteAttr(new THREE.CylinderGeometry(0.5, 0.5, 1, 6, 1, true));
-    const edgeMat = new THREE.MeshStandardMaterial({ roughness: 0.75, metalness: 0.2, vertexColors: true, transparent: true, opacity: theme.edgeOpacity });
+    const edgeMatVisible = new THREE.MeshStandardMaterial({ roughness: 0.75, metalness: 0.2, vertexColors: true, transparent: true, opacity: theme.edgeOpacity });
+    const edgeMatHidden = new THREE.MeshStandardMaterial({ roughness: 0.75, metalness: 0.2, vertexColors: true, transparent: true, opacity: 0.1 });
     const MAX_EDGE_INSTANCES = 120000;
     const nEdges = Math.min(graph.edges.length, MAX_EDGE_INSTANCES);
-    const edges = new THREE.InstancedMesh(edgeGeo, edgeMat, nEdges);
-    edges.instanceMatrix.setUsage(THREE.StaticDrawUsage);
-    edges.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(nEdges * 3), 3);
+    const edgesVisible = new THREE.InstancedMesh(edgeGeo, edgeMatVisible, nEdges);
+    const edgesHidden = new THREE.InstancedMesh(edgeGeo, edgeMatHidden, nEdges);
+    edgesVisible.instanceMatrix.setUsage(THREE.StaticDrawUsage);
+    edgesHidden.instanceMatrix.setUsage(THREE.StaticDrawUsage);
+    edgesVisible.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(nEdges * 3), 3);
+    edgesHidden.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(nEdges * 3), 3);
     let ei = 0;
     for (const e of graph.edges) {
         if (ei >= nEdges) break;
@@ -137,23 +142,29 @@ export function renderGraph(container, graph, opts) {
         mid.addVectors(a, b).multiplyScalar(0.5);
         q.setFromUnitVectors(up, dir.clone().normalize());
         m.compose(mid, q, new THREE.Vector3(1, len, 1));
-        edges.setMatrixAt(ei, m);
-        // colour the edge by the SOURCE commit's branch -> strands stay traceable
-        edges.setColorAt(ei, tintOf(s.branch));
+        edgesVisible.setMatrixAt(ei, m);
+        edgesVisible.setColorAt(ei, tintOf(s.branch));
         ei++;
     }
-    edges.count = ei;
-    edges.instanceMatrix.needsUpdate = true;
-    edges.instanceColor.needsUpdate = true;
-    edgeGroup.add(edges);
+    edgesVisible.count = ei;
+    edgesHidden.count = 0;
+    edgesVisible.instanceMatrix.needsUpdate = true;
+    edgesVisible.instanceColor.needsUpdate = true;
+    edgeGroup.add(edgesVisible);
+    edgeGroup.add(edgesHidden);
     scene.add(edgeGroup);
 
     // ---- nodes as instanced spheres (one draw call, real volume) ----
+    // Two meshes: visible (opacity 1.0) and hidden (opacity 0.1) for filtering
     const nodeGeo = whiteAttr(new THREE.SphereGeometry(1, 14, 12));
-    const nodeMat = new THREE.MeshStandardMaterial({ roughness: 0.32, metalness: 0.25, vertexColors: true });
-    const nodes = new THREE.InstancedMesh(nodeGeo, nodeMat, graph.nodes.length);
-    nodes.instanceMatrix.setUsage(THREE.StaticDrawUsage);
-    nodes.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(graph.nodes.length * 3), 3);
+    const nodeMatVisible = new THREE.MeshStandardMaterial({ roughness: 0.32, metalness: 0.25, vertexColors: true, transparent: true, opacity: 1.0 });
+    const nodeMatHidden = new THREE.MeshStandardMaterial({ roughness: 0.32, metalness: 0.25, vertexColors: true, transparent: true, opacity: 0.1 });
+    const nodesVisible = new THREE.InstancedMesh(nodeGeo, nodeMatVisible, graph.nodes.length);
+    const nodesHidden = new THREE.InstancedMesh(nodeGeo, nodeMatHidden, graph.nodes.length);
+    nodesVisible.instanceMatrix.setUsage(THREE.StaticDrawUsage);
+    nodesHidden.instanceMatrix.setUsage(THREE.StaticDrawUsage);
+    nodesVisible.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(graph.nodes.length * 3), 3);
+    nodesHidden.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(graph.nodes.length * 3), 3);
     // radius scales with how busy a commit is (merge hubs look heavier)
     const childCount = new Map();
     for (const e of graph.edges) childCount.set(e.target, (childCount.get(e.target) || 0) + 1);
@@ -167,7 +178,7 @@ export function renderGraph(container, graph, opts) {
         pos.set(n.x, n.y, n.z);
         scl.set(r, r, r);
         m.compose(pos, idq, scl);
-        nodes.setMatrixAt(i, m);
+        nodesVisible.setMatrixAt(i, m);
     };
     let selectedIndex = -1;
     graph.nodes.forEach((n, i) => {
@@ -175,13 +186,16 @@ export function renderGraph(container, graph, opts) {
         pos.set(n.x, n.y, n.z);
         scl.set(r, r, r);
         m.compose(pos, idq, scl);
-        nodes.setMatrixAt(i, m);
-        nodes.setColorAt(i, tintOf(n.branch));
+        nodesVisible.setMatrixAt(i, m);
+        nodesVisible.setColorAt(i, tintOf(n.branch));
         n._r = r;
     });
-    nodes.instanceMatrix.needsUpdate = true;
-    nodes.instanceColor.needsUpdate = true;
-    scene.add(nodes);
+    nodesVisible.count = graph.nodes.length;
+    nodesHidden.count = 0;
+    nodesVisible.instanceMatrix.needsUpdate = true;
+    nodesVisible.instanceColor.needsUpdate = true;
+    scene.add(nodesVisible);
+    scene.add(nodesHidden);
 
     // ---- selection marker (halo around the clicked commit) ----
     const selMat = new THREE.MeshBasicMaterial({ color: theme.selection, transparent: true, opacity: 0.85, wireframe: true });
@@ -249,7 +263,7 @@ export function renderGraph(container, graph, opts) {
         mouse.x = ((ev.clientX - rect.left) / rect.width) * 2 - 1;
         mouse.y = -((ev.clientY - rect.top) / rect.height) * 2 + 1;
         raycaster.setFromCamera(mouse, camera);
-        const hits = raycaster.intersectObject(nodes, false);
+        const hits = raycaster.intersectObject(nodesVisible, false);
         if (hits.length) {
             const idx = hits[0].instanceId;
             return graph.nodes[idx] ? { idx, node: graph.nodes[idx] } : null;
@@ -283,7 +297,7 @@ export function renderGraph(container, graph, opts) {
             const rr = baseRadius(n) * 2.4;
             selection.scale.set(rr, rr, rr);
             writeNodeMatrix(idx);
-            nodes.instanceMatrix.needsUpdate = true;
+            nodesVisible.instanceMatrix.needsUpdate = true;
         }
     }
 
@@ -328,84 +342,131 @@ export function renderGraph(container, graph, opts) {
         stats.textContent = `commits: ${graph.nodes.length} | branches: ${graph.branches.length} | edges: ${graph.edges.length} | head: ${graph.head?.slice(0, 7) ?? '?'}`;
     }
 
+    // Store base matrices for filtering (avoid re-reading from InstancedMesh)
+    const baseNodeMatrices = new Float32Array(graph.nodes.length * 16);
+    const baseEdgeMatrices = new Float32Array(nEdges * 16);
+    for (let i = 0; i < graph.nodes.length; i++) {
+        nodesVisible.getMatrixAt(i, m);
+        m.toArray(baseNodeMatrices, i * 16);
+    }
+    for (let i = 0; i < ei; i++) {
+        edgesVisible.getMatrixAt(i, m);
+        m.toArray(baseEdgeMatrices, i * 16);
+    }
+
     const api = {
-        scene, camera, renderer, controls, nodes, edges, labelRenderer,
+        scene, camera, renderer, controls, nodes: nodesVisible, edges: edgesVisible, nodesHidden, edgesHidden, labelRenderer,
         theme: opts.themeName || 'midnight',
         select,
         setAutoRotate(on) { controls.autoRotate = !!on; },
         toggleTimeline(on) { axisGroup.visible = !!on; },
         /**
          * Filter branches by visibility. Nodes/edges of hidden branches are
-         * faded toward the background; visible branches keep their colors.
+         * moved to the hidden mesh (opacity 0.1); visible ones stay in the
+         * visible mesh (opacity 1.0).
          * @param {Set<number>|null} visibleBranchIds  null = show all
          */
         setBranchFilter(visibleBranchIds) {
-            const fadeColor = new THREE.Color(theme.recede);
-            const tmpColor = new THREE.Color();
-            // nodes
+            let vi = 0, hi = 0;
             for (let i = 0; i < graph.nodes.length; i++) {
                 const n = graph.nodes[i];
                 const isVisible = !visibleBranchIds || visibleBranchIds.has(n.branch);
+                m.fromArray(baseNodeMatrices, i * 16);
                 if (isVisible) {
-                    nodes.setColorAt(i, tintOf(n.branch));
+                    nodesVisible.setMatrixAt(vi, m);
+                    nodesVisible.setColorAt(vi, tintOf(n.branch));
+                    vi++;
                 } else {
-                    tmpColor.copy(tintOf(n.branch)).lerp(fadeColor, 0.92);
-                    nodes.setColorAt(i, tmpColor);
+                    nodesHidden.setMatrixAt(hi, m);
+                    nodesHidden.setColorAt(hi, tintOf(n.branch));
+                    hi++;
                 }
             }
-            nodes.instanceColor.needsUpdate = true;
+            nodesVisible.count = vi;
+            nodesHidden.count = hi;
+            nodesVisible.instanceMatrix.needsUpdate = true;
+            nodesVisible.instanceColor.needsUpdate = true;
+            nodesHidden.instanceMatrix.needsUpdate = true;
+            nodesHidden.instanceColor.needsUpdate = true;
             // edges
-            for (let i = 0; i < edges.count; i++) {
+            let evi = 0, ehi = 0;
+            for (let i = 0; i < ei; i++) {
                 const e = graph.edges[i];
                 const s = nodeById.get(e.source);
                 if (!s) continue;
+                m.fromArray(baseEdgeMatrices, i * 16);
                 const isVisible = !visibleBranchIds || visibleBranchIds.has(s.branch);
                 if (isVisible) {
-                    edges.setColorAt(i, tintOf(s.branch));
+                    edgesVisible.setMatrixAt(evi, m);
+                    edgesVisible.setColorAt(evi, tintOf(s.branch));
+                    evi++;
                 } else {
-                    tmpColor.copy(tintOf(s.branch)).lerp(fadeColor, 0.92);
-                    edges.setColorAt(i, tmpColor);
+                    edgesHidden.setMatrixAt(ehi, m);
+                    edgesHidden.setColorAt(ehi, tintOf(s.branch));
+                    ehi++;
                 }
             }
-            edges.instanceColor.needsUpdate = true;
+            edgesVisible.count = evi;
+            edgesHidden.count = ehi;
+            edgesVisible.instanceMatrix.needsUpdate = true;
+            edgesVisible.instanceColor.needsUpdate = true;
+            edgesHidden.instanceMatrix.needsUpdate = true;
+            edgesHidden.instanceColor.needsUpdate = true;
         },
         /**
          * Filter nodes/edges by date range. Nodes outside [minDate, maxDate]
-         * are faded toward the background.
+         * are moved to the hidden mesh (opacity 0.1).
          * @param {number|null} minDate  timestamp ms, or null
          * @param {number|null} maxDate  timestamp ms, or null
          */
         setDateFilter(minDate, maxDate) {
-            const fadeColor = new THREE.Color(theme.recede);
-            const tmpColor = new THREE.Color();
-            // nodes
+            let vi = 0, hi = 0;
             for (let i = 0; i < graph.nodes.length; i++) {
                 const n = graph.nodes[i];
                 const t = Date.parse(n.date);
                 const inRange = !Number.isFinite(t) || (!minDate || t >= minDate) && (!maxDate || t <= maxDate);
+                m.fromArray(baseNodeMatrices, i * 16);
                 if (inRange) {
-                    nodes.setColorAt(i, tintOf(n.branch));
+                    nodesVisible.setMatrixAt(vi, m);
+                    nodesVisible.setColorAt(vi, tintOf(n.branch));
+                    vi++;
                 } else {
-                    tmpColor.copy(tintOf(n.branch)).lerp(fadeColor, 0.92);
-                    nodes.setColorAt(i, tmpColor);
+                    nodesHidden.setMatrixAt(hi, m);
+                    nodesHidden.setColorAt(hi, tintOf(n.branch));
+                    hi++;
                 }
             }
-            nodes.instanceColor.needsUpdate = true;
+            nodesVisible.count = vi;
+            nodesHidden.count = hi;
+            nodesVisible.instanceMatrix.needsUpdate = true;
+            nodesVisible.instanceColor.needsUpdate = true;
+            nodesHidden.instanceMatrix.needsUpdate = true;
+            nodesHidden.instanceColor.needsUpdate = true;
             // edges
-            for (let i = 0; i < edges.count; i++) {
+            let evi = 0, ehi = 0;
+            for (let i = 0; i < ei; i++) {
                 const e = graph.edges[i];
                 const s = nodeById.get(e.source);
                 if (!s) continue;
                 const t = Date.parse(s.date);
                 const inRange = !Number.isFinite(t) || (!minDate || t >= minDate) && (!maxDate || t <= maxDate);
+                m.fromArray(baseEdgeMatrices, i * 16);
                 if (inRange) {
-                    edges.setColorAt(i, tintOf(s.branch));
+                    edgesVisible.setMatrixAt(evi, m);
+                    edgesVisible.setColorAt(evi, tintOf(s.branch));
+                    evi++;
                 } else {
-                    tmpColor.copy(tintOf(s.branch)).lerp(fadeColor, 0.92);
-                    edges.setColorAt(i, tmpColor);
+                    edgesHidden.setMatrixAt(ehi, m);
+                    edgesHidden.setColorAt(ehi, tintOf(s.branch));
+                    ehi++;
                 }
             }
-            edges.instanceColor.needsUpdate = true;
+            edgesVisible.count = evi;
+            edgesHidden.count = ehi;
+            edgesVisible.instanceMatrix.needsUpdate = true;
+            edgesVisible.instanceColor.needsUpdate = true;
+            edgesHidden.instanceMatrix.needsUpdate = true;
+            edgesHidden.instanceColor.needsUpdate = true;
         },
         dispose() { cancelAnimationFrame(raf); controls.dispose(); renderer.dispose(); },
     };
