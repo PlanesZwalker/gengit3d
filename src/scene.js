@@ -8,6 +8,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 import { getTheme } from './themes.js';
+import { assignBranchColors } from './branch-colors.js';
 
 /**
  * Build and render the graph into a container element.
@@ -20,9 +21,11 @@ export function renderGraph(container, graph, opts) {
     if (typeof opts === 'string') opts = { themeName: opts };
     opts = opts || {};
     const theme = getTheme(opts.themeName);
-    const PALETTE = theme.palette;
     const showTimeline = opts.timeline !== false;
     const onSelect = typeof opts.onSelect === 'function' ? opts.onSelect : null;
+
+    // assign a distinct color to every branch (mutates branch.color)
+    const branchColorMap = assignBranchColors(graph);
 
     const width = container.clientWidth || 800;
     const height = container.clientHeight || 600;
@@ -81,7 +84,7 @@ export function renderGraph(container, graph, opts) {
     scene.add(rim);
 
     const nodeById = new Map(graph.nodes.map((n) => [n.id, n]));
-    const colorOf = (branchId) => PALETTE[(graph.branches.find((b) => b.id === branchId)?.color ?? 0) % PALETTE.length];
+    const colorOf = (branchId) => branchColorMap.get(branchId) ?? 0x4f9dff;
 
     // prominence: the big branches keep their colour, the long tail recedes
     const branchesSorted = [...graph.branches].sort((a, b) => b.commits - a.commits);
