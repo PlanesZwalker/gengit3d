@@ -230,6 +230,8 @@
     const legendList = document.getElementById('gengit3d-legend-list');
     const legendSearch = document.getElementById('gengit3d-legend-search');
     let branchVisibility = new Map(); // branchId -> bool
+    let legendPage = 0;
+    let searchDebounce = null;
 
     function openLegend() { legend.classList.add('open'); }
     function closeLegend() { legend.classList.remove('open'); }
@@ -242,6 +244,7 @@
         branchVisibility = new Map();
         const branches = [...graph.branches].sort((a, b) => b.commits - a.commits);
         branches.forEach((b) => branchVisibility.set(b.id, true));
+        legendPage = 0;
         renderLegendList(graph, '');
         updateBranchFilter();
     }
@@ -254,7 +257,12 @@
             legendList.innerHTML = '<div class="empty">No branches match.</div>';
             return;
         }
-        legendList.innerHTML = filtered.map((b) => {
+        // pagination: show first 50, with "show more" button
+        const PAGE_SIZE = 50;
+        const page = legendPage;
+        const slice = filtered.slice(0, (page + 1) * PAGE_SIZE);
+        const hasMore = filtered.length > (page + 1) * PAGE_SIZE;
+        legendList.innerHTML = slice.map((b) => {
             const visible = branchVisibility.get(b.id) !== false;
             const colorHex = '#' + (b.color ?? 0x4f9dff).toString(16).padStart(6, '0');
             return `<div class="item${visible ? '' : ' hidden-branch'}" data-branch="${b.id}">` +
@@ -262,12 +270,12 @@
                 `<span class="swatch" style="background:${colorHex}"></span>` +
                 `<span class="name" title="${esc(b.name)}">${esc(b.name)}</span>` +
                 `<span class="count">${b.commits}</span></div>`;
-        }).join('');
-        // wire checkboxes
-        legendList.querySelectorAll('.item').forEach((el) => {
+        }).join('') + (hasMore ? `<div class="item load-more" style="justify-content:center;color:var(--muted);cursor:pointer;">Show more (${filtered.length - (page + 1) * PAGE_SIZE} more)</div>` : '');
+        // event delegation: single listener on the container
+        legendList.querySelectorAll('.item[data-branch]').forEach((el) => {
             const bid = parseInt(el.dataset.branch, 10);
             el.addEventListener('click', (e) => {
-                if (e.target.tagName === 'INPUT') return; // let the checkbox handle it
+                if (e.target.tagName === 'INPUT') return;
                 const cb = el.querySelector('input');
                 cb.checked = !cb.checked;
                 toggleBranch(bid, cb.checked);
@@ -277,6 +285,8 @@
                 toggleBranch(bid, e.target.checked);
             });
         });
+        const loadMore = legendList.querySelector('.load-more');
+        if (loadMore) loadMore.addEventListener('click', () => { legendPage++; renderLegendList(graph, filter); });
     }
 
     function toggleBranch(branchId, visible) {
@@ -296,15 +306,21 @@
     }
 
     legendSearch.addEventListener('input', () => {
-        if (currentGraph) renderLegendList(currentGraph, legendSearch.value);
+        if (searchDebounce) clearTimeout(searchDebounce);
+        searchDebounce = setTimeout(() => {
+            legendPage = 0;
+            if (currentGraph) renderLegendList(currentGraph, legendSearch.value);
+        }, 150);
     });
     document.getElementById('gengit3d-legend-all').addEventListener('click', () => {
         for (const [bid] of branchVisibility) branchVisibility.set(bid, true);
+        legendPage = 0;
         if (currentGraph) renderLegendList(currentGraph, legendSearch.value);
         updateBranchFilter();
     });
     document.getElementById('gengit3d-legend-none').addEventListener('click', () => {
         for (const [bid] of branchVisibility) branchVisibility.set(bid, false);
+        legendPage = 0;
         if (currentGraph) renderLegendList(currentGraph, legendSearch.value);
         updateBranchFilter();
     });
@@ -312,6 +328,7 @@
         const branches = currentGraph ? [...currentGraph.branches].sort((a, b) => b.commits - a.commits) : [];
         const top10 = new Set(branches.slice(0, 10).map((b) => b.id));
         for (const [bid] of branchVisibility) branchVisibility.set(bid, top10.has(bid));
+        legendPage = 0;
         if (currentGraph) renderLegendList(currentGraph, legendSearch.value);
         updateBranchFilter();
     });
