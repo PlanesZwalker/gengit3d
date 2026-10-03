@@ -52,11 +52,12 @@
     #gengit3d-legend .bulk button:hover { filter: brightness(1.12); }
     #gengit3d-legend .date-filter { padding: 8px 12px; border-bottom: 1px solid var(--border); }
     #gengit3d-legend .date-filter label { display: block; font: 10px monospace; color: var(--muted); margin-bottom: 4px; }
-    #gengit3d-legend .date-filter .row { display: flex; gap: 6px; align-items: center; }
-    #gengit3d-legend .date-filter input[type="date"] { flex: 1; background: var(--input); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 4px 6px; font: 11px monospace; outline: none; color-scheme: dark; }
+    #gengit3d-legend .date-filter .row { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 6px; }
+    #gengit3d-legend .date-filter input[type="date"] { width: 100%; background: var(--input); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 4px 6px; font: 11px monospace; outline: none; color-scheme: dark; box-sizing: border-box; }
     #gengit3d-legend .date-filter input[type="date"]:focus { border-color: var(--accent); }
-    #gengit3d-legend .date-filter button { background: var(--btn); color: var(--btn-text); border: 1px solid var(--btn-border); border-radius: 4px; padding: 4px 8px; font: 10px monospace; cursor: pointer; white-space: nowrap; }
-    #gengit3d-legend .date-filter button:hover { filter: brightness(1.12); }
+    #gengit3d-legend .date-filter .actions { display: flex; gap: 6px; }
+    #gengit3d-legend .date-filter .actions button { flex: 1; background: var(--btn); color: var(--btn-text); border: 1px solid var(--btn-border); border-radius: 4px; padding: 4px 8px; font: 10px monospace; cursor: pointer; white-space: nowrap; }
+    #gengit3d-legend .date-filter .actions button:hover { filter: brightness(1.12); }
     #gengit3d-legend .list { overflow-y: auto; flex: 1; padding: 4px 0; }
     #gengit3d-legend .list .item { display: flex; align-items: center; gap: 6px; padding: 3px 12px; font: 11px monospace; cursor: pointer; }
     #gengit3d-legend .list .item:hover { background: var(--input); }
@@ -131,6 +132,8 @@
       <div class="row">
         <input id="gengit3d-date-from" type="date" title="from date" />
         <input id="gengit3d-date-to" type="date" title="to date" />
+      </div>
+      <div class="actions">
         <button id="gengit3d-date-apply" title="apply date filter">Apply</button>
         <button id="gengit3d-date-clear" title="clear date filter">Clear</button>
       </div>
