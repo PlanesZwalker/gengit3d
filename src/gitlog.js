@@ -22,6 +22,7 @@ const RECORD_SEP = '\x1e'; // record separator
 export async function rawGitLog(repoDir, { max = 0 } = {}) {
     const args = [
         'log',
+        '--all',
         `--pretty=format:%H${FIELD_SEP}%P${FIELD_SEP}%an${FIELD_SEP}%ae${FIELD_SEP}%ad${FIELD_SEP}%s${FIELD_SEP}%D%x1e`,
         '--date=iso-strict',
         '--topo-order',
@@ -126,78 +127,63 @@ export async function getChildrenMap(repoDir) {
 
 /**
  * Get all commits for each branch using git rev-list.
- * Much faster than git branch --contains for each commit.
+ * Reads the truth from git refs (zero topology heuristic): the first ref
+ * (local refs before remotes) that reaches a commit owns it.
  * @param {string} repoDir
- * @returns {Promise<Map<string, string>>} hash -> branch name
+ * @returns {Promise<{hashToBranch: Map<string,string>, branchCommits: Map<string,number>, branches: Array<{name:string,hash:string}>}>}
  */
 export async function getCommitsByBranch(repoDir) {
-    // 1. Get branch tips
+    // 1. Real branch refs. Drop the */HEAD symref alias; keep local refs first
+    //    so `dev` wins over `origin/dev`.
     const { stdout: tipsStdout } = await execFileP('git', [
         'for-each-ref',
-        '--format=%(refname:short) %(objectname)',
+        '--format=%(refname) %(refname:short) %(objectname)',
         'refs/heads', 'refs/remotes',
     ], { cwd: repoDir, maxBuffer: 16 * 1024 * 1024 });
-    
-    const tips = new Map(); // hash -> branch name
+
+    const branches = [];
+    const seen = new Set();
     for (const line of tipsStdout.split('\n')) {
-        const spaceIdx = line.indexOf(' ');
-        if (spaceIdx < 0) continue;
-        const name = line.slice(0, spaceIdx).trim();
-        const hash = line.slice(spaceIdx + 1).trim();
-        if (!name || !hash) continue;
-        let normalizedName = name;
-        if (name.startsWith('origin/') && name !== 'origin/HEAD') {
-            normalizedName = name.slice(7);
+        const [full, name, hash] = line.trim().split(' ');
+        if (!full || !name || !hash) continue;
+        if (full.endsWith('/HEAD')) continue; // origin/HEAD symref alias
+        if (seen.has(name)) continue;
+        seen.add(name);
+        branches.push({ name, hash });
+    }
+
+    // 2. For each branch, list reachable commits. First ref to claim a commit wins.
+    const hashToBranch = new Map();
+    const branchCommits = new Map();
+    for (const br of branches) {
+        let revList;
+        try {
+            const { stdout } = await execFileP('git', ['rev-list', br.name],
+                { cwd: repoDir, maxBuffer: 256 * 1024 * 1024 });
+            revList = stdout.split('\n').filter(Boolean);
+        } catch {
+            continue; // unreachable / invalid ref
         }
-        tips.set(hash, normalizedName);
-    }
-    
-    // 2. Get children map: hash -> [child1, child2, ...]
-    const { stdout: childrenStdout } = await execFileP('git', [
-        'rev-list', '--all', '--children',
-    ], { cwd: repoDir, maxBuffer: 256 * 1024 * 1024 });
-    
-    const childrenMap = new Map();
-    for (const line of childrenStdout.split('\n')) {
-        const parts = line.trim().split(/\s+/);
-        if (parts.length < 1) continue;
-        const hash = parts[0];
-        const children = parts.slice(1);
-        childrenMap.set(hash, children);
-    }
-    
-    // 3. BFS from tips: each commit inherits branch from its nearest tip
-    const branchCommits = new Map(); // hash -> branch name
-    const queue = [];
-    for (const [hash, name] of tips) {
-        branchCommits.set(hash, name);
-        queue.push(hash);
-    }
-    
-    while (queue.length > 0) {
-        const hash = queue.shift();
-        const branch = branchCommits.get(hash);
-        const children = childrenMap.get(hash) || [];
-        for (const child of children) {
-            if (!branchCommits.has(child)) {
-                branchCommits.set(child, branch);
-                queue.push(child);
-            }
+        branchCommits.set(br.name, revList.length);
+        for (const hash of revList) {
+            if (!hashToBranch.has(hash)) hashToBranch.set(hash, br.name);
         }
     }
-    
-    return branchCommits;
+
+    return { hashToBranch, branchCommits, branches };
 }
 
 /**
  * Parse raw git log text into a graph structure.
  * @param {string} raw
  * @param {string} repoDir
- * @param {Map<string, string>} [commitBranches] hash -> branch name (from getCommitBranches)
- * @param {Map<string, string[]>} [childrenMap] hash -> array of child hashes (from getChildrenMap)
+ * @param {object} [opts]
+ * @param {Map<string,string>} [opts.hashToBranch] hash -> branch name (from getCommitsByBranch)
+ * @param {Map<string,number>} [opts.branchCommits] branch -> reachable commit count
+ * @param {Array<{name:string,hash:string}>} [opts.branches] real refs (for-each-ref order)
  * @returns {{nodes:object[], edges:object[], branches:object[], head:string|null, repoDir:string}}
  */
-export function parseGitLog(raw, repoDir = '', commitBranches = null, childrenMap = null) {
+export function parseGitLog(raw, repoDir = '', { hashToBranch = new Map(), branchCommits = new Map(), branches: realBranches = [] } = {}) {
     const records = raw.split(RECORD_SEP).filter((r) => r.trim().length > 0);
     const nodes = [];
     const edges = [];
@@ -269,22 +255,19 @@ export function parseGitLog(raw, repoDir = '', commitBranches = null, childrenMa
     };
     for (const n of nodes) n.depth = getDepth(n);
 
-    // branch assignment: use real git branches if available, fallback to topological heuristic
+    // branch assignment: read the truth from git refs (no topology heuristic).
+    // Each commit is assigned to the first ref (local before remote) that reaches it.
     const branchColor = {};
-    if (commitBranches && commitBranches.size > 0) {
-        // Direct assignment: each commit gets its branch from commitBranches
+    if (hashToBranch.size > 0) {
         for (const n of nodes) {
-            n.branch = commitBranches.get(n.id) || 'unknown';
+            n.branch = hashToBranch.get(n.id) || 'unknown';
         }
-        // Fill branchColor for color assignment
         let colorIdx = 0;
         for (const n of nodes) {
-            if (!(n.branch in branchColor)) {
-                branchColor[n.branch] = colorIdx++;
-            }
+            if (!(n.branch in branchColor)) branchColor[n.branch] = colorIdx++;
         }
     } else {
-        // Fallback: topological heuristic (original algorithm)
+        // Fallback: topological heuristic (only when git refs are unavailable)
         const children = new Map();
         for (const n of nodes) children.set(n.id, []);
         for (const e of edges) {
@@ -317,15 +300,22 @@ export function parseGitLog(raw, repoDir = '', commitBranches = null, childrenMa
         for (const n of nodes) if (!n.branch) n.branch = 'branch_0';
     }
 
-    // branch summary
+    // branch summary — one entry per REAL ref (even 0 rendered commits),
+    // plus synthetic buckets (e.g. 'unknown') that actually own nodes.
+    // `commits` = nodes rendered on this branch (legend sort + layout prominence).
+    // `reach`   = total commits reachable from the ref tip.
     const branchMap = new Map();
+    realBranches.forEach((br, i) => {
+        branchMap.set(br.name, { id: br.name, name: br.name, color: i % 6, commits: 0, reach: branchCommits.get(br.name) ?? 0, tip: br.hash });
+    });
     for (const n of nodes) {
-        if (!branchMap.has(n.branch)) {
-            branchMap.set(n.branch, { id: n.branch, name: n.branchName || n.branch, color: (branchColor[n.branch] ?? 0) % 6, commits: 0, tip: null });
+        let b = branchMap.get(n.branch);
+        if (!b) {
+            b = { id: n.branch, name: n.branch, color: (branchColor[n.branch] ?? 0) % 6, commits: 0, reach: 0, tip: null };
+            branchMap.set(n.branch, b);
         }
-        const b = branchMap.get(n.branch);
         b.commits++;
-        if (!b.tip) { b.tip = n.id; if (n.branchName) b.name = n.branchName; }
+        if (!b.tip) b.tip = n.id;
     }
     const branches = [...branchMap.values()];
 
@@ -337,6 +327,6 @@ export function parseGitLog(raw, repoDir = '', commitBranches = null, childrenMa
  */
 export async function buildGraph(repoDir, opts = {}) {
     const raw = await rawGitLog(repoDir, opts);
-    const commitBranches = await getCommitsByBranch(repoDir);
-    return parseGitLog(raw, repoDir, commitBranches);
+    const { hashToBranch, branchCommits, branches } = await getCommitsByBranch(repoDir);
+    return parseGitLog(raw, repoDir, { hashToBranch, branchCommits, branches });
 }
