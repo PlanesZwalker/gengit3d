@@ -34,7 +34,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import http from 'node:http';
 import { buildGraph } from '../src/gitlog.js';
-import { layoutGraph, relax } from '../src/layout3d.js';
+import { layoutGraph, layoutGraphForView, relax } from '../src/layout3d.js';
 import { buildSimilarEdges } from '../src/similar-commits.js';
 
 const execFileP = promisify(execFile);
@@ -54,15 +54,16 @@ function parseArgs(argv) {
         else if (a === '--port') out.port = parseInt(argv[++i], 10);
         else if (a === '--dir') out.dir = argv[++i];
         else if (a === '--relax') out.relax = true;
+        else if (a === '--view') out.view = argv[++i];
     }
     return out;
 }
 
 /** Build the graph for a repo dir: parse -> similar edges -> layout. */
-async function makeGraph(repo, { max = 0, relax: doRelax = false } = {}) {
+async function makeGraph(repo, { max = 0, relax: doRelax = false, view = 'topological' } = {}) {
     const graph = await buildGraph(repo, { max });
     graph.similarEdges = buildSimilarEdges(graph);
-    layoutGraph(graph);
+    layoutGraphForView(graph, view);
     if (doRelax) relax(graph);
     return graph;
 }
@@ -158,10 +159,11 @@ async function handleCommit(res, q) {
 async function handleGraph(res, q) {
     const repo = resolve(toNative(q.get('repo') || ''));
     const max = parseInt(q.get('max') || '0', 10) || 0;
+    const view = q.get('view') || 'topological';
     if (!repo) return sendJson(res, 400, { error: 'missing ?repo=<path>' });
     if (!(await isGitRepo(repo))) return sendJson(res, 400, { error: `not a git repository: ${repo}` });
     try {
-        const graph = await makeGraph(repo, { max });
+        const graph = await makeGraph(repo, { max, view });
         sendJson(res, 200, { ...graph, source: { kind: 'local', repo } });
     } catch (e) {
         sendJson(res, 500, { error: `parse failed: ${e.message}` });
@@ -194,6 +196,7 @@ async function handleClone(res, q) {
     const url = (q.get('url') || '').trim();
     const depth = Math.max(0, parseInt(q.get('depth') || '500', 10) || 0);
     const max = parseInt(q.get('max') || '0', 10) || 0;
+    const view = q.get('view') || 'topological';
     if (!url) return sendJson(res, 400, { error: 'missing ?url=<git-url>' });
     if (!ALLOWED_URL.test(url)) return sendJson(res, 400, { error: `unsupported url scheme: ${url}` });
 
@@ -209,7 +212,7 @@ async function handleClone(res, q) {
         return sendJson(res, 500, { error: `git clone failed: ${(e.stderr || e.message || '').toString().slice(0, 400)}` });
     }
     try {
-        const graph = await makeGraph(dest, { max });
+        const graph = await makeGraph(dest, { max, view });
         sendJson(res, 200, { ...graph, source: { kind: 'clone', url, depth, repo: dest } });
     } catch (e) {
         sendJson(res, 500, { error: `parse failed: ${e.message}` });

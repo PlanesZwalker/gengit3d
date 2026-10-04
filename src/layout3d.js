@@ -100,6 +100,205 @@ function hash01(str) {
     return ((h >>> 0) % 100000) / 100000;
 }
 
+// ── View: chronological (linear timeline) ─────────────────────────────────
+function layoutChronological(graph, { height = 300, width = 800 } = {}) {
+    const times = graph.nodes.map((n) => Date.parse(n.date)).filter(Number.isFinite);
+    let tMin = Infinity, tMax = -Infinity;
+    for (const t of times) { if (t < tMin) tMin = t; if (t > tMax) tMax = t; }
+    const useTime = times.length === graph.nodes.length && tMax > tMin;
+    graph.axis = { mode: useTime ? 'time' : 'depth', tMin, tMax };
+    const maxDepth = graph.nodes.reduce((m, n) => Math.max(m, n.depth), 0) || 1;
+    for (const n of graph.nodes) {
+        const h1 = hash01(n.id);
+        const h2 = hash01(n.id + '#r');
+        if (useTime) {
+            n.x = ((Date.parse(n.date) - tMin) / (tMax - tMin) - 0.5) * width;
+            n.y = (n.depth / maxDepth - 0.5) * height;
+        } else {
+            n.x = (n.depth / maxDepth - 0.5) * width;
+            n.y = (h1 - 0.5) * height;
+        }
+        n.z = (h2 - 0.5) * 40;
+        n.angle = 0;
+        n.radius = 0;
+        n.lane = 0;
+    }
+    return graph;
+}
+
+// ── View: author (cylindrical, grouped by author) ─────────────────────────
+function layoutAuthor(graph, { height = 300, radiusMajor = 100, radiusMinor = 250, prominentCount = 36 } = {}) {
+    const authors = [...new Set(graph.nodes.map((n) => n.author))].sort();
+    const nAuthors = authors.length || 1;
+    const nProminent = Math.min(prominentCount, nAuthors);
+    const GOLDEN = Math.PI * (3 - Math.sqrt(5));
+    const posOf = new Map();
+    authors.forEach((a, rank) => {
+        let angle, radius;
+        if (rank < nProminent) {
+            angle = rank * GOLDEN;
+            radius = radiusMajor + (rank % 6) * 38;
+        } else {
+            const k = rank - nProminent;
+            angle = (k + 0.5) * GOLDEN;
+            radius = radiusMinor + (k % 5) * 10;
+        }
+        posOf.set(a, { angle, radius });
+    });
+    const times = graph.nodes.map((n) => Date.parse(n.date)).filter(Number.isFinite);
+    let tMin = Infinity, tMax = -Infinity;
+    for (const t of times) { if (t < tMin) tMin = t; if (t > tMax) tMax = t; }
+    const useTime = times.length === graph.nodes.length && tMax > tMin;
+    graph.axis = { mode: useTime ? 'time' : 'depth', tMin, tMax };
+    const maxDepth = graph.nodes.reduce((m, n) => Math.max(m, n.depth), 0) || 1;
+    for (const n of graph.nodes) {
+        const p = posOf.get(n.author) || { angle: 0, radius: radiusMinor };
+        const h1 = hash01(n.id);
+        const h2 = hash01(n.id + '#r');
+        const angle = p.angle + (h1 - 0.5) * 0.1;
+        const radius = p.radius + (h2 - 0.5) * 10;
+        n.angle = angle;
+        n.radius = radius;
+        n.x = Math.cos(angle) * radius;
+        n.z = Math.sin(angle) * radius;
+        if (useTime) {
+            n.y = ((Date.parse(n.date) - tMin) / (tMax - tMin) - 0.5) * height;
+        } else {
+            n.y = (n.depth / maxDepth - 0.5) * height;
+        }
+        n.lane = 0;
+    }
+    return graph;
+}
+
+// ── View: radial (concentric circles by date) ─────────────────────────────
+function layoutRadial(graph, { height = 300, radiusStep = 30 } = {}) {
+    const times = graph.nodes.map((n) => Date.parse(n.date)).filter(Number.isFinite);
+    let tMin = Infinity, tMax = -Infinity;
+    for (const t of times) { if (t < tMin) tMin = t; if (t > tMax) tMax = t; }
+    const useTime = times.length === graph.nodes.length && tMax > tMin;
+    graph.axis = { mode: useTime ? 'time' : 'depth', tMin, tMax };
+    const maxDepth = graph.nodes.reduce((m, n) => Math.max(m, n.depth), 0) || 1;
+    // group nodes by date (day)
+    const byDate = new Map();
+    for (const n of graph.nodes) {
+        const key = useTime ? new Date(Date.parse(n.date)).toISOString().slice(0, 10) : String(n.depth);
+        if (!byDate.has(key)) byDate.set(key, []);
+        byDate.get(key).push(n);
+    }
+    const dates = [...byDate.keys()].sort();
+    const nRings = dates.length;
+    for (let i = 0; i < nRings; i++) {
+        const date = dates[i];
+        const nodes = byDate.get(date);
+        const radius = 50 + i * radiusStep;
+        const angleStep = (Math.PI * 2) / nodes.length;
+        nodes.forEach((n, j) => {
+            const angle = j * angleStep + hash01(n.id) * 0.5;
+            n.angle = angle;
+            n.radius = radius;
+            n.x = Math.cos(angle) * radius;
+            n.z = Math.sin(angle) * radius;
+            if (useTime) {
+                n.y = ((Date.parse(n.date) - tMin) / (tMax - tMin) - 0.5) * height;
+            } else {
+                n.y = (n.depth / maxDepth - 0.5) * height;
+            }
+            n.lane = 0;
+        });
+    }
+    return graph;
+}
+
+// ── View: queue (columns like git log --graph) ───────────────────────────
+function layoutQueue(graph, { height = 300, width = 800 } = {}) {
+    const times = graph.nodes.map((n) => Date.parse(n.date)).filter(Number.isFinite);
+    let tMin = Infinity, tMax = -Infinity;
+    for (const t of times) { if (t < tMin) tMin = t; if (t > tMax) tMax = t; }
+    const useTime = times.length === graph.nodes.length && tMax > tMin;
+    graph.axis = { mode: useTime ? 'time' : 'depth', tMin, tMax };
+    const maxDepth = graph.nodes.reduce((m, n) => Math.max(m, n.depth), 0) || 1;
+    // assign each branch to a column
+    const branches = [...graph.branches].sort((a, b) => b.commits - a.commits);
+    const colOf = new Map();
+    branches.forEach((b, i) => colOf.set(b.id, i));
+    const nCols = branches.length || 1;
+    for (const n of graph.nodes) {
+        const col = colOf.get(n.branch) || 0;
+        const h1 = hash01(n.id);
+        const h2 = hash01(n.id + '#r');
+        n.x = (col / nCols - 0.5) * width + (h1 - 0.5) * 10;
+        if (useTime) {
+            n.y = ((Date.parse(n.date) - tMin) / (tMax - tMin) - 0.5) * height;
+        } else {
+            n.y = (n.depth / maxDepth - 0.5) * height;
+        }
+        n.z = (h2 - 0.5) * 20;
+        n.angle = 0;
+        n.radius = 0;
+        n.lane = col;
+    }
+    return graph;
+}
+
+// ── View: real-branches (cylindrical, real git branches) ─────────────────
+function layoutRealBranches(graph, { height = 300, radiusMajor = 100, radiusMinor = 250, prominentCount = 36 } = {}) {
+    // Use real branch names if available (node.branch is already set by parseGitLog)
+    const branches = [...graph.branches].sort((a, b) => b.commits - a.commits);
+    const nBranches = branches.length || 1;
+    const nProminent = Math.min(prominentCount, nBranches);
+    const GOLDEN = Math.PI * (3 - Math.sqrt(5));
+    const posOf = new Map();
+    branches.forEach((b, rank) => {
+        let angle, radius;
+        if (rank < nProminent) {
+            angle = rank * GOLDEN;
+            radius = radiusMajor + (rank % 6) * 38;
+        } else {
+            const k = rank - nProminent;
+            angle = (k + 0.5) * GOLDEN;
+            radius = radiusMinor + (k % 5) * 10;
+        }
+        posOf.set(b.id, { angle, radius });
+    });
+    const times = graph.nodes.map((n) => Date.parse(n.date)).filter(Number.isFinite);
+    let tMin = Infinity, tMax = -Infinity;
+    for (const t of times) { if (t < tMin) tMin = t; if (t > tMax) tMax = t; }
+    const useTime = times.length === graph.nodes.length && tMax > tMin;
+    graph.axis = { mode: useTime ? 'time' : 'depth', tMin, tMax };
+    for (const n of graph.nodes) {
+        const p = posOf.get(n.branch) || { angle: 0, radius: radiusMinor };
+        const h1 = hash01(n.id);
+        const h2 = hash01(n.id + '#r');
+        const angle = p.angle + (h1 - 0.5) * 0.05;
+        const radius = p.radius + (h2 - 0.5) * 5;
+        n.angle = angle;
+        n.radius = radius;
+        n.x = Math.cos(angle) * radius;
+        n.z = Math.sin(angle) * radius;
+        if (useTime) {
+            n.y = ((Date.parse(n.date) - tMin) / (tMax - tMin) - 0.5) * height;
+        } else {
+            n.y = (n.depth / maxDepth - 0.5) * height;
+        }
+        n.lane = 0;
+    }
+    return graph;
+}
+
+// ── Dispatcher ─────────────────────────────────────────────────────────────
+export function layoutGraphForView(graph, view = 'topological', opts = {}) {
+    switch (view) {
+        case 'chronological': return layoutChronological(graph, opts);
+        case 'author': return layoutAuthor(graph, opts);
+        case 'radial': return layoutRadial(graph, opts);
+        case 'queue': return layoutQueue(graph, opts);
+        case 'real-branches': return layoutRealBranches(graph, opts);
+        case 'topological':
+        default: return layoutGraph(graph, opts);
+    }
+}
+
 /**
  * Optional light relaxation: nudges nodes apart within the same depth band so
  * dense columns breathe. Operates on the xz plane (radial), preserving the

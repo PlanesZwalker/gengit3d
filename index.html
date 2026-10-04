@@ -105,6 +105,15 @@
     <button id="gengit3d-render">Render</button>
     <label for="gengit3d-theme">theme</label>
     <select id="gengit3d-theme" title="colour theme (light + dark)"></select>
+    <label for="gengit3d-view">view</label>
+    <select id="gengit3d-view" title="graph layout view">
+      <option value="topological">topological (cylindrical)</option>
+      <option value="chronological">chronological (linear)</option>
+      <option value="author">author (cylindrical)</option>
+      <option value="radial">radial (concentric)</option>
+      <option value="queue">queue (columns)</option>
+      <option value="real-branches">real branches (cylindrical)</option>
+    </select>
     <label title="rotate the view automatically"><input id="gengit3d-rotate" type="checkbox" /> rotate</label>
     <button id="gengit3d-legend-toggle" title="show/hide branch legend">Branches</button>
   </div>
@@ -170,6 +179,7 @@
     const depthEl = document.getElementById('gengit3d-depth');
     const renderBtn = document.getElementById('gengit3d-render');
     const themeSel = document.getElementById('gengit3d-theme');
+    const viewSel = document.getElementById('gengit3d-view');
     const rotateEl = document.getElementById('gengit3d-rotate');
     const detail = document.getElementById('gengit3d-detail');
     const detailBody = document.getElementById('gengit3d-detail-body');
@@ -418,12 +428,13 @@
     async function renderFromInput() {
       const v = input.value.trim();
       if (!v) { setStatus('enter a repo path or git URL', 'err'); return; }
+      const view = viewSel.value || 'topological';
       if (isUrl(v)) {
         const depth = parseInt(depthEl.value, 10) || 0;
-        await fetchGraph('/api/clone', 'url=' + encodeURIComponent(v) + '&depth=' + depth,
+        await fetchGraph('/api/clone', 'url=' + encodeURIComponent(v) + '&depth=' + depth + '&view=' + view,
           (d) => `cloned ${d.source.url} → ${d.nodes.length} commits, ${d.branches.length} branches`);
       } else {
-        await fetchGraph('/api/graph', 'repo=' + encodeURIComponent(v),
+        await fetchGraph('/api/graph', 'repo=' + encodeURIComponent(v) + '&view=' + view,
           (d) => `${d.source.repo} → ${d.nodes.length} commits, ${d.branches.length} branches`);
       }
     }
