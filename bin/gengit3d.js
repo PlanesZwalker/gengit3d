@@ -87,7 +87,9 @@ async function cmdParse(opts) {
     const outPath = opts.out ? resolve(opts.out) : join(repo, 'gengit3d.graph.json');
     await writeFile(outPath, JSON.stringify(graph));
     console.log(`[gengit3d] wrote ${outPath}`);
-    console.log(`[gengit3d] commits=${graph.nodes.length} branches=${graph.branches.length} edges=${graph.edges.length} head=${graph.head?.slice(0, 7)}`);
+    console.log(
+        `[gengit3d] commits=${graph.nodes.length} branches=${graph.branches.length} edges=${graph.edges.length} head=${graph.head?.slice(0, 7)}`
+    );
     return outPath;
 }
 
@@ -95,7 +97,11 @@ async function cmdParse(opts) {
 
 function sendJson(res, code, obj) {
     const body = JSON.stringify(obj);
-    res.writeHead(code, { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body), 'Cache-Control': 'no-store' });
+    res.writeHead(code, {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(body),
+        'Cache-Control': 'no-store',
+    });
     res.end(body);
 }
 
@@ -179,16 +185,27 @@ async function handleRepos(res, q) {
     async function walk(dir, level) {
         if (level > depth || found.length >= 60 || seen.has(dir)) return;
         seen.add(dir);
-        if (await isGitRepo(dir)) { found.push(dir); return; } // don't descend into a repo
+        if (await isGitRepo(dir)) {
+            found.push(dir);
+            return;
+        } // don't descend into a repo
         let entries;
-        try { entries = await readdir(dir, { withFileTypes: true }); } catch { return; }
+        try {
+            entries = await readdir(dir, { withFileTypes: true });
+        } catch {
+            return;
+        }
         for (const e of entries) {
             if (!e.isDirectory()) continue;
             if (e.name === 'node_modules' || e.name.startsWith('.') || e.name === 'jenkins_home') continue;
             await walk(join(dir, e.name), level + 1);
         }
     }
-    try { await walk(root, 1); } catch { /* ignore */ }
+    try {
+        await walk(root, 1);
+    } catch {
+        /* ignore */
+    }
     sendJson(res, 200, { root, repos: found });
 }
 
@@ -209,7 +226,9 @@ async function handleClone(res, q) {
     try {
         await execFileP('git', args, { timeout: 300000, maxBuffer: 64 * 1024 * 1024 });
     } catch (e) {
-        return sendJson(res, 500, { error: `git clone failed: ${(e.stderr || e.message || '').toString().slice(0, 400)}` });
+        return sendJson(res, 500, {
+            error: `git clone failed: ${(e.stderr || e.message || '').toString().slice(0, 400)}`,
+        });
     }
     try {
         const graph = await makeGraph(dest, { max, view });
@@ -235,24 +254,33 @@ async function cmdServe(opts) {
         // ── static ──
         let url = pathname === '/' ? '/index.html' : pathname;
         const filePath = join(dir, url);
-        if (!filePath.startsWith(dir)) { res.writeHead(403); return res.end('forbidden'); }
+        if (!filePath.startsWith(dir)) {
+            res.writeHead(403);
+            return res.end('forbidden');
+        }
         try {
             const data = await readFile(filePath);
             const ext = filePath.split('.').pop();
-            const mime = {
-                html: 'text/html', json: 'application/json', js: 'text/javascript',
-                css: 'text/css', ico: 'image/x-icon', svg: 'image/svg+xml',
-            }[ext] || 'application/octet-stream';
+            const mime =
+                {
+                    html: 'text/html',
+                    json: 'application/json',
+                    js: 'text/javascript',
+                    css: 'text/css',
+                    ico: 'image/x-icon',
+                    svg: 'image/svg+xml',
+                }[ext] || 'application/octet-stream';
             res.writeHead(200, { 'Content-Type': mime, 'Cache-Control': 'no-store' });
             res.end(data);
         } catch {
-            res.writeHead(404); res.end('not found');
+            res.writeHead(404);
+            res.end('not found');
         }
     });
     server.listen(port, () => {
         console.log(`[gengit3d] serving ${dir} at http://localhost:${port}`);
         console.log(`[gengit3d] open http://localhost:${port}/ — enter a repo path or git URL to render it`);
-        console.log(`[gengit3d] API: /api/graph?repo=<path>  |  /api/clone?url=<git-url>`);
+        console.log('[gengit3d] API: /api/graph?repo=<path>  |  /api/clone?url=<git-url>');
     });
 }
 
@@ -260,12 +288,25 @@ async function main() {
     const args = process.argv.slice(2);
     const cmd = args[0] || 'all';
     const opts = parseArgs(args.slice(1));
-    if (cmd === 'parse') { await cmdParse(opts); return; }
-    if (cmd === 'serve') { await cmdServe(opts); return; }
-    if (cmd === 'clean') { await rm(CLONE_ROOT, { recursive: true, force: true }); console.log(`[gengit3d] removed ${CLONE_ROOT}`); return; }
+    if (cmd === 'parse') {
+        await cmdParse(opts);
+        return;
+    }
+    if (cmd === 'serve') {
+        await cmdServe(opts);
+        return;
+    }
+    if (cmd === 'clean') {
+        await rm(CLONE_ROOT, { recursive: true, force: true });
+        console.log(`[gengit3d] removed ${CLONE_ROOT}`);
+        return;
+    }
     // 'all' / default: parse into ROOT then serve
     if (opts.repo) await cmdParse({ ...opts, out: join(ROOT, 'gengit3d.graph.json') });
     await cmdServe({ ...opts, dir: ROOT });
 }
 
-main().catch((e) => { console.error(e); process.exit(1); });
+main().catch(e => {
+    console.error(e);
+    process.exit(1);
+});

@@ -25,14 +25,17 @@
  * @param {number} [opts.angleWobble=0.16]  per-commit angular spread (radians)
  * @param {number} [opts.radiusWobble=10]   per-commit radial spread
  */
-export function layoutGraph(graph, {
-    height = 300,
-    radiusMajor = 100,
-    radiusMinor = 250,
-    prominentCount = 36,
-    angleWobble = 0.05,
-    radiusWobble = 5,
-} = {}) {
+export function layoutGraph(
+    graph,
+    {
+        height = 300,
+        radiusMajor = 100,
+        radiusMinor = 250,
+        prominentCount = 36,
+        angleWobble = 0.05,
+        radiusWobble = 5,
+    } = {}
+) {
     const branches = [...graph.branches].sort((a, b) => b.commits - a.commits);
     const nBranches = branches.length || 1;
     const nProminent = Math.min(prominentCount, nBranches);
@@ -317,16 +320,21 @@ export function relax(graph, { iterations = 20, repel = 0.6 } = {}) {
             if (col.length < 2) continue;
             for (let i = 0; i < col.length; i++) {
                 for (let j = i + 1; j < col.length; j++) {
-                    const a = col[i], b = col[j];
-                    let dx = b.x - a.x, dz = b.z - a.z;
+                    const a = col[i],
+                        b = col[j];
+                    let dx = b.x - a.x,
+                        dz = b.z - a.z;
                     const d2 = dx * dx + dz * dz;
                     const minD = 6;
                     if (d2 < minD * minD) {
                         const d = Math.sqrt(d2) || 0.001;
                         const push = ((minD - d) / d) * repel * 0.5;
-                        dx *= push; dz *= push;
-                        b.x += dx; b.z += dz;
-                        a.x -= dx; a.z -= dz;
+                        dx *= push;
+                        dz *= push;
+                        b.x += dx;
+                        b.z += dz;
+                        a.x -= dx;
+                        a.z -= dz;
                     }
                 }
             }
