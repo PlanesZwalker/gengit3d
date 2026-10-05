@@ -23,6 +23,7 @@ export async function rawGitLog(repoDir, { max = 0 } = {}) {
     const args = [
         'log',
         '--all',
+        'refs/stash',
         `--pretty=format:%H${FIELD_SEP}%P${FIELD_SEP}%an${FIELD_SEP}%ae${FIELD_SEP}%ad${FIELD_SEP}%s${FIELD_SEP}%D%x1e`,
         '--date=iso-strict',
         '--topo-order',
@@ -41,11 +42,11 @@ export async function rawGitLog(repoDir, { max = 0 } = {}) {
  * @returns {Promise<Map<string, string>>} hash -> branch name
  */
 export async function getBranchTips(repoDir) {
-    const { stdout } = await execFileP('git', [
-        'for-each-ref',
-        '--format=%(objectname) %(refname:short)',
-        'refs/heads', 'refs/remotes',
-    ], { cwd: repoDir, maxBuffer: 16 * 1024 * 1024 });
+    const { stdout } = await execFileP(
+        'git',
+        ['for-each-ref', '--format=%(objectname) %(refname:short)', 'refs/heads', 'refs/remotes'],
+        { cwd: repoDir, maxBuffer: 16 * 1024 * 1024 }
+    );
     const tips = new Map();
     for (const line of stdout.split('\n')) {
         const [hash, ...nameParts] = line.trim().split(' ');
@@ -69,11 +70,10 @@ export async function getBranchTips(repoDir) {
  * @returns {Promise<Map<string, string>>} hash -> branch name
  */
 export async function getCommitBranches(repoDir) {
-    const { stdout } = await execFileP('git', [
-        'log', '--all',
-        '--format=%H %D',
-        '--date=iso-strict',
-    ], { cwd: repoDir, maxBuffer: 256 * 1024 * 1024 });
+    const { stdout } = await execFileP('git', ['log', '--all', '--format=%H %D', '--date=iso-strict'], {
+        cwd: repoDir,
+        maxBuffer: 256 * 1024 * 1024,
+    });
     const commitBranches = new Map();
     for (const line of stdout.split('\n')) {
         const spaceIdx = line.indexOf(' ');
@@ -82,20 +82,32 @@ export async function getCommitBranches(repoDir) {
         const refsRaw = line.slice(spaceIdx + 1).trim();
         if (!refsRaw) continue;
         // Parse refs: "HEAD -> dev, origin/dev, origin/master"
-        const refs = refsRaw.split(',').map((r) => r.trim()).filter(Boolean);
+        const refs = refsRaw
+            .split(',')
+            .map(r => r.trim())
+            .filter(Boolean);
         let branchName = null;
         for (const r of refs) {
             const m = r.match(/HEAD\s*->\s*(\S+)/);
-            if (m) { branchName = m[1]; break; }
-        }
-        if (!branchName) {
-            for (const r of refs) {
-                if (r.startsWith('origin/') && !r.endsWith('HEAD')) { branchName = r.slice(7); break; }
+            if (m) {
+                branchName = m[1];
+                break;
             }
         }
         if (!branchName) {
             for (const r of refs) {
-                if (r !== 'HEAD' && !r.startsWith('tag:')) { branchName = r.replace(/^refs\//, ''); break; }
+                if (r.startsWith('origin/') && !r.endsWith('HEAD')) {
+                    branchName = r.slice(7);
+                    break;
+                }
+            }
+        }
+        if (!branchName) {
+            for (const r of refs) {
+                if (r !== 'HEAD' && !r.startsWith('tag:')) {
+                    branchName = r.replace(/^refs\//, '');
+                    break;
+                }
             }
         }
         if (branchName) {
@@ -111,9 +123,10 @@ export async function getCommitBranches(repoDir) {
  * @returns {Promise<Map<string, string[]>>} hash -> array of child hashes
  */
 export async function getChildrenMap(repoDir) {
-    const { stdout } = await execFileP('git', [
-        'rev-list', '--all', '--children',
-    ], { cwd: repoDir, maxBuffer: 256 * 1024 * 1024 });
+    const { stdout } = await execFileP('git', ['rev-list', '--all', '--children'], {
+        cwd: repoDir,
+        maxBuffer: 256 * 1024 * 1024,
+    });
     const childrenOf = new Map();
     for (const line of stdout.split('\n')) {
         const parts = line.trim().split(' ');
@@ -126,6 +139,25 @@ export async function getChildrenMap(repoDir) {
 }
 
 /**
+ * List all stashes with their hash and message.
+ * @param {string} repoDir
+ * @returns {Promise<Array<{name:string,hash:string,message:string}>>}
+ */
+export async function getStashes(repoDir) {
+    const { stdout } = await execFileP('git', ['stash', 'list', '--format=%H%x1f%gd%x1f%s'], {
+        cwd: repoDir,
+        maxBuffer: 16 * 1024 * 1024,
+    });
+    const stashes = [];
+    for (const line of stdout.split('\n')) {
+        const [hash, name, ...msgParts] = line.trim().split(FIELD_SEP);
+        if (!hash || !name) continue;
+        stashes.push({ name, hash, message: msgParts.join(FIELD_SEP) || '(no message)' });
+    }
+    return stashes;
+}
+
+/**
  * Get all commits for each branch using git rev-list.
  * Reads the truth from git refs (zero topology heuristic): the first ref
  * (local refs before remotes) that reaches a commit owns it.
@@ -135,11 +167,11 @@ export async function getChildrenMap(repoDir) {
 export async function getCommitsByBranch(repoDir) {
     // 1. Real branch refs. Drop the */HEAD symref alias; keep local refs first
     //    so `dev` wins over `origin/dev`.
-    const { stdout: tipsStdout } = await execFileP('git', [
-        'for-each-ref',
-        '--format=%(refname) %(refname:short) %(objectname)',
-        'refs/heads', 'refs/remotes',
-    ], { cwd: repoDir, maxBuffer: 16 * 1024 * 1024 });
+    const { stdout: tipsStdout } = await execFileP(
+        'git',
+        ['for-each-ref', '--format=%(refname) %(refname:short) %(objectname)', 'refs/heads', 'refs/remotes'],
+        { cwd: repoDir, maxBuffer: 16 * 1024 * 1024 }
+    );
 
     const branches = [];
     const seen = new Set();
@@ -152,14 +184,27 @@ export async function getCommitsByBranch(repoDir) {
         branches.push({ name, hash });
     }
 
+    // 1b. Stashes: each stash is a separate "branch" so it shows in the legend.
+    //     Stash commits are often already reachable from other branches, so
+    //     they may end up with 0 rendered commits — that's expected.
+    const stashes = await getStashes(repoDir);
+    for (const s of stashes) {
+        if (!seen.has(s.name)) {
+            seen.add(s.name);
+            branches.push({ name: s.name, hash: s.hash });
+        }
+    }
+
     // 2. For each branch, list reachable commits. First ref to claim a commit wins.
     const hashToBranch = new Map();
     const branchCommits = new Map();
     for (const br of branches) {
         let revList;
         try {
-            const { stdout } = await execFileP('git', ['rev-list', br.name],
-                { cwd: repoDir, maxBuffer: 256 * 1024 * 1024 });
+            const { stdout } = await execFileP('git', ['rev-list', br.name], {
+                cwd: repoDir,
+                maxBuffer: 256 * 1024 * 1024,
+            });
             revList = stdout.split('\n').filter(Boolean);
         } catch {
             continue; // unreachable / invalid ref
@@ -183,8 +228,12 @@ export async function getCommitsByBranch(repoDir) {
  * @param {Array<{name:string,hash:string}>} [opts.branches] real refs (for-each-ref order)
  * @returns {{nodes:object[], edges:object[], branches:object[], head:string|null, repoDir:string}}
  */
-export function parseGitLog(raw, repoDir = '', { hashToBranch = new Map(), branchCommits = new Map(), branches: realBranches = [] } = {}) {
-    const records = raw.split(RECORD_SEP).filter((r) => r.trim().length > 0);
+export function parseGitLog(
+    raw,
+    repoDir = '',
+    { hashToBranch = new Map(), branchCommits = new Map(), branches: realBranches = [] } = {}
+) {
+    const records = raw.split(RECORD_SEP).filter(r => r.trim().length > 0);
     const nodes = [];
     const edges = [];
     const byHash = new Map();
@@ -194,25 +243,37 @@ export function parseGitLog(raw, repoDir = '', { hashToBranch = new Map(), branc
         const [hash, parentsRaw, author, email, date, subject, refsRaw] = rec
             .replace(/^\n+/, '')
             .split(FIELD_SEP)
-            .map((s) => s.replace(/\n+$/, ''));
+            .map(s => s.replace(/\n+$/, ''));
         if (!hash) continue;
         if (head === null) head = hash; // first row is HEAD
         const parents = (parentsRaw || '').split(/\s+/).filter(Boolean);
         // extract branch name from refs (e.g. "HEAD -> dev, origin/dev" -> "dev")
-        const refs = (refsRaw || '').split(',').map((r) => r.trim()).filter(Boolean);
+        const refs = (refsRaw || '')
+            .split(',')
+            .map(r => r.trim())
+            .filter(Boolean);
         let branchName = null;
         for (const r of refs) {
             const m = r.match(/HEAD\s*->\s*(\S+)/);
-            if (m) { branchName = m[1]; break; }
-        }
-        if (!branchName) {
-            for (const r of refs) {
-                if (r.startsWith('origin/') && !r.endsWith('HEAD')) { branchName = r.slice(7); break; }
+            if (m) {
+                branchName = m[1];
+                break;
             }
         }
         if (!branchName) {
             for (const r of refs) {
-                if (r !== 'HEAD' && !r.startsWith('tag:')) { branchName = r.replace(/^refs\//, ''); break; }
+                if (r.startsWith('origin/') && !r.endsWith('HEAD')) {
+                    branchName = r.slice(7);
+                    break;
+                }
+            }
+        }
+        if (!branchName) {
+            for (const r of refs) {
+                if (r !== 'HEAD' && !r.startsWith('tag:')) {
+                    branchName = r.replace(/^refs\//, '');
+                    break;
+                }
             }
         }
         const node = {
@@ -227,7 +288,9 @@ export function parseGitLog(raw, repoDir = '', { hashToBranch = new Map(), branc
             // layout fields filled later:
             depth: -1,
             branch: null,
-            x: 0, y: 0, z: 0,
+            x: 0,
+            y: 0,
+            z: 0,
         };
         nodes.push(node);
         byHash.set(hash, node);
@@ -238,7 +301,7 @@ export function parseGitLog(raw, repoDir = '', { hashToBranch = new Map(), branc
 
     // depth = longest path from a root (no parents) — topological via memo.
     const depthCache = new Map();
-    const getDepth = (n) => {
+    const getDepth = n => {
         if (depthCache.has(n.id)) return depthCache.get(n.id);
         if (!n.parents || n.parents.length === 0) {
             depthCache.set(n.id, 0);
@@ -273,10 +336,10 @@ export function parseGitLog(raw, repoDir = '', { hashToBranch = new Map(), branc
         for (const e of edges) {
             if (children.has(e.target)) children.get(e.target).push(e.source);
         }
-        const isParentOfSomeone = new Set(edges.map((e) => e.source));
-        const tips = nodes.filter((n) => !isParentOfSomeone.has(n.id));
+        const isParentOfSomeone = new Set(edges.map(e => e.source));
+        const tips = nodes.filter(n => !isParentOfSomeone.has(n.id));
         let branchCounter = 0;
-        const branchNameFor = (tip) => {
+        const branchNameFor = tip => {
             const key = tip.branch || `branch_${branchCounter++}`;
             if (!(key in branchColor)) branchColor[key] = branchCounter - 1;
             return key;
@@ -306,12 +369,26 @@ export function parseGitLog(raw, repoDir = '', { hashToBranch = new Map(), branc
     // `reach`   = total commits reachable from the ref tip.
     const branchMap = new Map();
     realBranches.forEach((br, i) => {
-        branchMap.set(br.name, { id: br.name, name: br.name, color: i % 6, commits: 0, reach: branchCommits.get(br.name) ?? 0, tip: br.hash });
+        branchMap.set(br.name, {
+            id: br.name,
+            name: br.name,
+            color: i % 6,
+            commits: 0,
+            reach: branchCommits.get(br.name) ?? 0,
+            tip: br.hash,
+        });
     });
     for (const n of nodes) {
         let b = branchMap.get(n.branch);
         if (!b) {
-            b = { id: n.branch, name: n.branch, color: (branchColor[n.branch] ?? 0) % 6, commits: 0, reach: 0, tip: null };
+            b = {
+                id: n.branch,
+                name: n.branch,
+                color: (branchColor[n.branch] ?? 0) % 6,
+                commits: 0,
+                reach: 0,
+                tip: null,
+            };
             branchMap.set(n.branch, b);
         }
         b.commits++;
