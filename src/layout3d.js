@@ -63,11 +63,13 @@ export function layoutGraph(
 
     // y axis: prefer the REAL commit DATE so the vertical axis is a true,
     // monotonic timeline. Fall back to topological depth when dates are absent.
-    const times = graph.nodes
-        .map((n) => Date.parse(n.date))
-        .filter((t) => Number.isFinite(t));
-    let tMin = Infinity, tMax = -Infinity;
-    for (const t of times) { if (t < tMin) tMin = t; if (t > tMax) tMax = t; }
+    const times = graph.nodes.map(n => Date.parse(n.date)).filter(t => Number.isFinite(t));
+    let tMin = Infinity,
+        tMax = -Infinity;
+    for (const t of times) {
+        if (t < tMin) tMin = t;
+        if (t > tMax) tMax = t;
+    }
     const useTime = times.length === graph.nodes.length && tMax > tMin;
     graph.axis = { mode: useTime ? 'time' : 'depth', tMin, tMax };
 
@@ -105,9 +107,13 @@ function hash01(str) {
 
 // ── View: chronological (linear timeline) ─────────────────────────────────
 function layoutChronological(graph, { height = 300, width = 800 } = {}) {
-    const times = graph.nodes.map((n) => Date.parse(n.date)).filter(Number.isFinite);
-    let tMin = Infinity, tMax = -Infinity;
-    for (const t of times) { if (t < tMin) tMin = t; if (t > tMax) tMax = t; }
+    const times = graph.nodes.map(n => Date.parse(n.date)).filter(Number.isFinite);
+    let tMin = Infinity,
+        tMax = -Infinity;
+    for (const t of times) {
+        if (t < tMin) tMin = t;
+        if (t > tMax) tMax = t;
+    }
     const useTime = times.length === graph.nodes.length && tMax > tMin;
     graph.axis = { mode: useTime ? 'time' : 'depth', tMin, tMax };
     const maxDepth = graph.nodes.reduce((m, n) => Math.max(m, n.depth), 0) || 1;
@@ -131,7 +137,7 @@ function layoutChronological(graph, { height = 300, width = 800 } = {}) {
 
 // ── View: author (cylindrical, grouped by author) ─────────────────────────
 function layoutAuthor(graph, { height = 300, radiusMajor = 100, radiusMinor = 250, prominentCount = 36 } = {}) {
-    const authors = [...new Set(graph.nodes.map((n) => n.author))].sort();
+    const authors = [...new Set(graph.nodes.map(n => n.author))].sort();
     const nAuthors = authors.length || 1;
     const nProminent = Math.min(prominentCount, nAuthors);
     const GOLDEN = Math.PI * (3 - Math.sqrt(5));
@@ -148,9 +154,13 @@ function layoutAuthor(graph, { height = 300, radiusMajor = 100, radiusMinor = 25
         }
         posOf.set(a, { angle, radius });
     });
-    const times = graph.nodes.map((n) => Date.parse(n.date)).filter(Number.isFinite);
-    let tMin = Infinity, tMax = -Infinity;
-    for (const t of times) { if (t < tMin) tMin = t; if (t > tMax) tMax = t; }
+    const times = graph.nodes.map(n => Date.parse(n.date)).filter(Number.isFinite);
+    let tMin = Infinity,
+        tMax = -Infinity;
+    for (const t of times) {
+        if (t < tMin) tMin = t;
+        if (t > tMax) tMax = t;
+    }
     const useTime = times.length === graph.nodes.length && tMax > tMin;
     graph.axis = { mode: useTime ? 'time' : 'depth', tMin, tMax };
     const maxDepth = graph.nodes.reduce((m, n) => Math.max(m, n.depth), 0) || 1;
@@ -176,9 +186,13 @@ function layoutAuthor(graph, { height = 300, radiusMajor = 100, radiusMinor = 25
 
 // ── View: radial (concentric circles by date) ─────────────────────────────
 function layoutRadial(graph, { height = 300, radiusStep = 30 } = {}) {
-    const times = graph.nodes.map((n) => Date.parse(n.date)).filter(Number.isFinite);
-    let tMin = Infinity, tMax = -Infinity;
-    for (const t of times) { if (t < tMin) tMin = t; if (t > tMax) tMax = t; }
+    const times = graph.nodes.map(n => Date.parse(n.date)).filter(Number.isFinite);
+    let tMin = Infinity,
+        tMax = -Infinity;
+    for (const t of times) {
+        if (t < tMin) tMin = t;
+        if (t > tMax) tMax = t;
+    }
     const useTime = times.length === graph.nodes.length && tMax > tMin;
     graph.axis = { mode: useTime ? 'time' : 'depth', tMin, tMax };
     const maxDepth = graph.nodes.reduce((m, n) => Math.max(m, n.depth), 0) || 1;
@@ -215,9 +229,13 @@ function layoutRadial(graph, { height = 300, radiusStep = 30 } = {}) {
 
 // ── View: queue (columns like git log --graph) ───────────────────────────
 function layoutQueue(graph, { height = 300, width = 800 } = {}) {
-    const times = graph.nodes.map((n) => Date.parse(n.date)).filter(Number.isFinite);
-    let tMin = Infinity, tMax = -Infinity;
-    for (const t of times) { if (t < tMin) tMin = t; if (t > tMax) tMax = t; }
+    const times = graph.nodes.map(n => Date.parse(n.date)).filter(Number.isFinite);
+    let tMin = Infinity,
+        tMax = -Infinity;
+    for (const t of times) {
+        if (t < tMin) tMin = t;
+        if (t > tMax) tMax = t;
+    }
     const useTime = times.length === graph.nodes.length && tMax > tMin;
     graph.axis = { mode: useTime ? 'time' : 'depth', tMin, tMax };
     const maxDepth = graph.nodes.reduce((m, n) => Math.max(m, n.depth), 0) || 1;
@@ -264,11 +282,16 @@ function layoutRealBranches(graph, { height = 300, radiusMajor = 100, radiusMino
         }
         posOf.set(b.id, { angle, radius });
     });
-    const times = graph.nodes.map((n) => Date.parse(n.date)).filter(Number.isFinite);
-    let tMin = Infinity, tMax = -Infinity;
-    for (const t of times) { if (t < tMin) tMin = t; if (t > tMax) tMax = t; }
+    const times = graph.nodes.map(n => Date.parse(n.date)).filter(Number.isFinite);
+    let tMin = Infinity,
+        tMax = -Infinity;
+    for (const t of times) {
+        if (t < tMin) tMin = t;
+        if (t > tMax) tMax = t;
+    }
     const useTime = times.length === graph.nodes.length && tMax > tMin;
     graph.axis = { mode: useTime ? 'time' : 'depth', tMin, tMax };
+    const maxDepth = graph.nodes.reduce((m, n) => Math.max(m, n.depth), 0) || 1;
     for (const n of graph.nodes) {
         const p = posOf.get(n.branch) || { angle: 0, radius: radiusMinor };
         const h1 = hash01(n.id);
@@ -292,13 +315,19 @@ function layoutRealBranches(graph, { height = 300, radiusMajor = 100, radiusMino
 // ── Dispatcher ─────────────────────────────────────────────────────────────
 export function layoutGraphForView(graph, view = 'topological', opts = {}) {
     switch (view) {
-        case 'chronological': return layoutChronological(graph, opts);
-        case 'author': return layoutAuthor(graph, opts);
-        case 'radial': return layoutRadial(graph, opts);
-        case 'queue': return layoutQueue(graph, opts);
-        case 'real-branches': return layoutRealBranches(graph, opts);
+        case 'chronological':
+            return layoutChronological(graph, opts);
+        case 'author':
+            return layoutAuthor(graph, opts);
+        case 'radial':
+            return layoutRadial(graph, opts);
+        case 'queue':
+            return layoutQueue(graph, opts);
+        case 'real-branches':
+            return layoutRealBranches(graph, opts);
         case 'topological':
-        default: return layoutGraph(graph, opts);
+        default:
+            return layoutGraph(graph, opts);
     }
 }
 
