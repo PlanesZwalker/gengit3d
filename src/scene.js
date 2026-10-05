@@ -44,7 +44,7 @@ export function renderGraph(container, graph, opts) {
     const center = new THREE.Vector3();
     box.getCenter(center);
     const maxDim = Math.max(size.x, size.y, size.z, 10);
-    const fitDist = (maxDim / 2) / Math.tan((camera.fov * Math.PI) / 360) * 1.25;
+    const fitDist = (maxDim / 2 / Math.tan((camera.fov * Math.PI) / 360)) * 1.25;
     camera.position.set(center.x + fitDist * 0.55, center.y + fitDist * 0.35, center.z + fitDist * 0.9);
     camera.lookAt(center);
 
@@ -67,7 +67,7 @@ export function renderGraph(container, graph, opts) {
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.08;
-    controls.autoRotate = !!opts.autoRotate;   // off by default so the timeline stays put
+    controls.autoRotate = !!opts.autoRotate; // off by default so the timeline stays put
     controls.autoRotateSpeed = 0.45;
     controls.target.copy(center);
 
@@ -83,8 +83,14 @@ export function renderGraph(container, graph, opts) {
     rim.position.set(0, maxDim * 0.6, maxDim * 0.9);
     scene.add(rim);
 
-    const nodeById = new Map(graph.nodes.map((n) => [n.id, n]));
-    const colorOf = (branchId) => branchColorMap.get(branchId) ?? 0x4f9dff;
+    const nodeById = new Map(graph.nodes.map(n => [n.id, n]));
+    const colorOf = branchId => branchColorMap.get(branchId) ?? 0x4f9dff;
+    // Synthetic tip nodes (stash/empty-branch) get a distinct color
+    const TIP_COLORS = { stash: 0xff8c42, 'empty-branch': 0x8b93a7 };
+    const tipColorOf = n => {
+        if (n.isTip && n.tipType) return TIP_COLORS[n.tipType] ?? 0xff8c42;
+        return null;
+    };
 
     // prominence: the big branches keep their colour, the long tail recedes
     const branchesSorted = [...graph.branches].sort((a, b) => b.commits - a.commits);
@@ -92,8 +98,8 @@ export function renderGraph(container, graph, opts) {
     const PROMINENT = 36;
     const RECEDE = new THREE.Color(theme.recede);
     const colorCache = new Map();
-    const isMajor = (branchId) => (rankOf.get(branchId) ?? 9999) < PROMINENT;
-    const tintOf = (branchId) => {
+    const isMajor = branchId => (rankOf.get(branchId) ?? 9999) < PROMINENT;
+    const tintOf = branchId => {
         let c = colorCache.get(branchId);
         if (c) return c;
         c = new THREE.Color(colorOf(branchId));
@@ -101,15 +107,23 @@ export function renderGraph(container, graph, opts) {
         colorCache.set(branchId, c);
         return c;
     };
+    // Node-level color override for synthetic tips
+    const nodeColorOf = n => {
+        const tipC = tipColorOf(n);
+        if (tipC !== null) return new THREE.Color(tipC);
+        return tintOf(n.branch);
+    };
     // white per-vertex colour so USE_COLOR * instanceColor tints correctly
     // (without it three.js reads a default (0,0,0) attribute -> black meshes)
-    const whiteAttr = (geo) => geo.setAttribute(
-        'color',
-        new THREE.Float32BufferAttribute(new Float32Array(geo.attributes.position.count * 3).fill(1), 3),
-    );
+    const whiteAttr = geo =>
+        geo.setAttribute(
+            'color',
+            new THREE.Float32BufferAttribute(new Float32Array(geo.attributes.position.count * 3).fill(1), 3)
+        );
 
     // ---- edges as tubes (real geometry, catches light -> matter) ----
     // Two meshes: visible (opacity 1.0) and hidden (opacity 0.1) for filtering
+    // Dashed edges (stash/empty-branch tips) use THREE.Line + LineDashedMaterial
     const edgeGroup = new THREE.Group();
     const up = new THREE.Vector3(0, 1, 0);
     const a = new THREE.Vector3();
@@ -119,10 +133,24 @@ export function renderGraph(container, graph, opts) {
     const q = new THREE.Quaternion();
     const m = new THREE.Matrix4();
     const edgeGeo = whiteAttr(new THREE.CylinderGeometry(0.5, 0.5, 1, 6, 1, true));
-    const edgeMatVisible = new THREE.MeshStandardMaterial({ roughness: 0.75, metalness: 0.2, vertexColors: true, transparent: true, opacity: theme.edgeOpacity });
-    const edgeMatHidden = new THREE.MeshStandardMaterial({ roughness: 0.75, metalness: 0.2, vertexColors: true, transparent: true, opacity: 0.1 });
+    const edgeMatVisible = new THREE.MeshStandardMaterial({
+        roughness: 0.75,
+        metalness: 0.2,
+        vertexColors: true,
+        transparent: true,
+        opacity: theme.edgeOpacity,
+    });
+    const edgeMatHidden = new THREE.MeshStandardMaterial({
+        roughness: 0.75,
+        metalness: 0.2,
+        vertexColors: true,
+        transparent: true,
+        opacity: 0.1,
+    });
     const MAX_EDGE_INSTANCES = 120000;
-    const nEdges = Math.min(graph.edges.length, MAX_EDGE_INSTANCES);
+    const solidEdges = graph.edges.filter(e => !e.dashed);
+    const dashedEdges = graph.edges.filter(e => e.dashed);
+    const nEdges = Math.min(solidEdges.length, MAX_EDGE_INSTANCES);
     const edgesVisible = new THREE.InstancedMesh(edgeGeo, edgeMatVisible, nEdges);
     const edgesHidden = new THREE.InstancedMesh(edgeGeo, edgeMatHidden, nEdges);
     edgesVisible.instanceMatrix.setUsage(THREE.StaticDrawUsage);
@@ -130,7 +158,7 @@ export function renderGraph(container, graph, opts) {
     edgesVisible.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(nEdges * 3), 3);
     edgesHidden.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(nEdges * 3), 3);
     let ei = 0;
-    for (const e of graph.edges) {
+    for (const e of solidEdges) {
         if (ei >= nEdges) break;
         const s = nodeById.get(e.source);
         const t = nodeById.get(e.target);
@@ -152,13 +180,46 @@ export function renderGraph(container, graph, opts) {
     edgesVisible.instanceColor.needsUpdate = true;
     edgeGroup.add(edgesVisible);
     edgeGroup.add(edgesHidden);
+
+    // ---- dashed edges (stash/empty-branch tips) ----
+    const dashedGroup = new THREE.Group();
+    const dashedMat = new THREE.LineDashedMaterial({
+        color: 0xff8c42,
+        dashSize: 4,
+        gapSize: 3,
+        transparent: true,
+        opacity: 0.7,
+    });
+    for (const e of dashedEdges) {
+        const s = nodeById.get(e.source);
+        const t = nodeById.get(e.target);
+        if (!s || !t) continue;
+        const points = [new THREE.Vector3(s.x, s.y, s.z), new THREE.Vector3(t.x, t.y, t.z)];
+        const geo = new THREE.BufferGeometry().setFromPoints(points);
+        const line = new THREE.Line(geo, dashedMat);
+        line.computeLineDistances();
+        dashedGroup.add(line);
+    }
+    edgeGroup.add(dashedGroup);
     scene.add(edgeGroup);
 
     // ---- nodes as instanced spheres (one draw call, real volume) ----
     // Two meshes: visible (opacity 1.0) and hidden (opacity 0.1) for filtering
     const nodeGeo = whiteAttr(new THREE.SphereGeometry(1, 14, 12));
-    const nodeMatVisible = new THREE.MeshStandardMaterial({ roughness: 0.32, metalness: 0.25, vertexColors: true, transparent: true, opacity: 1.0 });
-    const nodeMatHidden = new THREE.MeshStandardMaterial({ roughness: 0.32, metalness: 0.25, vertexColors: true, transparent: true, opacity: 0.1 });
+    const nodeMatVisible = new THREE.MeshStandardMaterial({
+        roughness: 0.32,
+        metalness: 0.25,
+        vertexColors: true,
+        transparent: true,
+        opacity: 1.0,
+    });
+    const nodeMatHidden = new THREE.MeshStandardMaterial({
+        roughness: 0.32,
+        metalness: 0.25,
+        vertexColors: true,
+        transparent: true,
+        opacity: 0.1,
+    });
     const nodesVisible = new THREE.InstancedMesh(nodeGeo, nodeMatVisible, graph.nodes.length);
     const nodesHidden = new THREE.InstancedMesh(nodeGeo, nodeMatHidden, graph.nodes.length);
     nodesVisible.instanceMatrix.setUsage(THREE.StaticDrawUsage);
@@ -171,8 +232,11 @@ export function renderGraph(container, graph, opts) {
     const pos = new THREE.Vector3();
     const scl = new THREE.Vector3();
     const idq = new THREE.Quaternion();
-    const baseRadius = (n) => 2.2 + Math.min(childCount.get(n.id) || 0, 6) * 0.5;
-    const writeNodeMatrix = (i) => {
+    const baseRadius = n => {
+        if (n.isTip) return 3.5; // synthetic tips are slightly larger
+        return 2.2 + Math.min(childCount.get(n.id) || 0, 6) * 0.5;
+    };
+    const writeNodeMatrix = i => {
         const n = graph.nodes[i];
         const r = baseRadius(n) * (i === selectedIndex ? 1.7 : 1);
         pos.set(n.x, n.y, n.z);
@@ -187,7 +251,7 @@ export function renderGraph(container, graph, opts) {
         scl.set(r, r, r);
         m.compose(pos, idq, scl);
         nodesVisible.setMatrixAt(i, m);
-        nodesVisible.setColorAt(i, tintOf(n.branch));
+        nodesVisible.setColorAt(i, nodeColorOf(n));
         n._r = r;
     });
     nodesVisible.count = graph.nodes.length;
@@ -198,25 +262,40 @@ export function renderGraph(container, graph, opts) {
     scene.add(nodesHidden);
 
     // ---- selection marker (halo around the clicked commit) ----
-    const selMat = new THREE.MeshBasicMaterial({ color: theme.selection, transparent: true, opacity: 0.85, wireframe: true });
+    const selMat = new THREE.MeshBasicMaterial({
+        color: theme.selection,
+        transparent: true,
+        opacity: 0.85,
+        wireframe: true,
+    });
     const selection = new THREE.Mesh(new THREE.SphereGeometry(1, 16, 12), selMat);
     selection.visible = false;
     scene.add(selection);
 
     // ---- timeline axis (vertical, history grows upward) with dated ticks ----
-    let yMin = Infinity, yMax = -Infinity;
-    for (const n of graph.nodes) { if (n.y < yMin) yMin = n.y; if (n.y > yMax) yMax = n.y; }
-    if (!isFinite(yMin)) { yMin = -1; yMax = 1; }
+    let yMin = Infinity,
+        yMax = -Infinity;
+    for (const n of graph.nodes) {
+        if (n.y < yMin) yMin = n.y;
+        if (n.y > yMax) yMax = n.y;
+    }
+    if (!isFinite(yMin)) {
+        yMin = -1;
+        yMax = 1;
+    }
     const axisGroup = new THREE.Group();
     if (showTimeline) {
         const axisGeo = new THREE.BufferGeometry().setFromPoints([
-            new THREE.Vector3(0, yMin, 0), new THREE.Vector3(0, yMax, 0),
+            new THREE.Vector3(0, yMin, 0),
+            new THREE.Vector3(0, yMax, 0),
         ]);
-        axisGroup.add(new THREE.Line(axisGeo, new THREE.LineBasicMaterial({ color: theme.axis, transparent: true, opacity: 0.9 })));
+        axisGroup.add(
+            new THREE.Line(axisGeo, new THREE.LineBasicMaterial({ color: theme.axis, transparent: true, opacity: 0.9 }))
+        );
 
         // sort nodes by y to map a tick to the nearest commit's date
-        const byY = [...graph.nodes].filter((n) => n.date).sort((p, r) => p.y - r.y);
-        const fmtDate = (iso) => (iso || '').slice(0, 10);
+        const byY = [...graph.nodes].filter(n => n.date).sort((p, r) => p.y - r.y);
+        const fmtDate = iso => (iso || '').slice(0, 10);
         const TICKS = 7;
         const tickGeo = whiteAttr(new THREE.SphereGeometry(1.4, 8, 6));
         const tickMat = new THREE.MeshBasicMaterial({ color: theme.axis });
@@ -224,12 +303,15 @@ export function renderGraph(container, graph, opts) {
         let ti = 0;
         for (let k = 0; k < TICKS; k++) {
             const y = yMin + ((yMax - yMin) * k) / (TICKS - 1);
-            pos.set(0, y, 0); scl.set(1, 1, 1);
+            pos.set(0, y, 0);
+            scl.set(1, 1, 1);
             m.compose(pos, idq, scl);
             ticks.setMatrixAt(ti++, m);
             // nearest commit by y -> its date
             let near = byY[0];
-            for (const n of byY) { if (Math.abs(n.y - y) < Math.abs(near.y - y)) near = n; }
+            for (const n of byY) {
+                if (Math.abs(n.y - y) < Math.abs(near.y - y)) near = n;
+            }
             const el = document.createElement('div');
             el.className = 'gengit3d-tick';
             el.textContent = fmtDate(near && near.date);
@@ -246,13 +328,16 @@ export function renderGraph(container, graph, opts) {
     // raycaster for hover tooltips + click selection
     const raycaster = new THREE.Raycaster();
     const mouse = new THREE.Vector2();
-    const tooltip = document.getElementById('gengit3d-tooltip') || (() => {
-        const el = document.createElement('div');
-        el.id = 'gengit3d-tooltip';
-        el.style.cssText = 'position:absolute;pointer-events:none;padding:4px 8px;border-radius:4px;font:12px monospace;display:none;z-index:10;';
-        document.body.appendChild(el);
-        return el;
-    })();
+    const tooltip =
+        document.getElementById('gengit3d-tooltip') ||
+        (() => {
+            const el = document.createElement('div');
+            el.id = 'gengit3d-tooltip';
+            el.style.cssText =
+                'position:absolute;pointer-events:none;padding:4px 8px;border-radius:4px;font:12px monospace;display:none;z-index:10;';
+            document.body.appendChild(el);
+            return el;
+        })();
     // tooltip colours come from the theme (dark tooltip on light themes and vice-versa)
     tooltip.style.background = theme.ui.tooltipBg;
     tooltip.style.color = theme.ui.tooltipText;
@@ -275,8 +360,8 @@ export function renderGraph(container, graph, opts) {
         const hit = pick(ev);
         if (hit) {
             tooltip.style.display = 'block';
-            tooltip.style.left = (ev.clientX + 12) + 'px';
-            tooltip.style.top = (ev.clientY + 12) + 'px';
+            tooltip.style.left = ev.clientX + 12 + 'px';
+            tooltip.style.top = ev.clientY + 12 + 'px';
             tooltip.textContent = `${hit.node.short} ${hit.node.author}: ${hit.node.subject.slice(0, 60)}`;
             document.body.style.cursor = 'pointer';
             return;
@@ -308,9 +393,13 @@ export function renderGraph(container, graph, opts) {
         if (onSelect) onSelect(hit.node, { repo: graph.source?.repo || graph.repoDir || null });
     }
     // distinguish a click from an orbit drag
-    let downX = 0, downY = 0;
-    renderer.domElement.addEventListener('pointerdown', (ev) => { downX = ev.clientX; downY = ev.clientY; });
-    renderer.domElement.addEventListener('pointerup', (ev) => {
+    let downX = 0,
+        downY = 0;
+    renderer.domElement.addEventListener('pointerdown', ev => {
+        downX = ev.clientX;
+        downY = ev.clientY;
+    });
+    renderer.domElement.addEventListener('pointerup', ev => {
         if (Math.abs(ev.clientX - downX) > 4 || Math.abs(ev.clientY - downY) > 4) return; // was a drag
         onClick(ev);
     });
@@ -355,19 +444,90 @@ export function renderGraph(container, graph, opts) {
     }
 
     const api = {
-        scene, camera, renderer, controls, nodes: nodesVisible, edges: edgesVisible, nodesHidden, edgesHidden, labelRenderer,
+        scene,
+        camera,
+        renderer,
+        controls,
+        nodes: nodesVisible,
+        edges: edgesVisible,
+        nodesHidden,
+        edgesHidden,
+        labelRenderer,
         theme: opts.themeName || 'midnight',
         select,
-        setAutoRotate(on) { controls.autoRotate = !!on; },
-        toggleTimeline(on) { axisGroup.visible = !!on; },
+        setAutoRotate(on) {
+            controls.autoRotate = !!on;
+        },
+        toggleTimeline(on) {
+            axisGroup.visible = !!on;
+        },
+        /**
+         * Show/hide synthetic tip nodes (stash/empty-branch) and their dashed edges.
+         * @param {boolean} visible
+         */
+        setTipsVisible(visible) {
+            // Filter nodes: hide synthetic tips
+            let vi = 0,
+                hi = 0;
+            for (let i = 0; i < graph.nodes.length; i++) {
+                const n = graph.nodes[i];
+                const isTip = n.isTip;
+                const show = visible || !isTip;
+                m.fromArray(baseNodeMatrices, i * 16);
+                if (show) {
+                    nodesVisible.setMatrixAt(vi, m);
+                    nodesVisible.setColorAt(vi, nodeColorOf(n));
+                    vi++;
+                } else {
+                    nodesHidden.setMatrixAt(hi, m);
+                    nodesHidden.setColorAt(hi, nodeColorOf(n));
+                    hi++;
+                }
+            }
+            nodesVisible.count = vi;
+            nodesHidden.count = hi;
+            nodesVisible.instanceMatrix.needsUpdate = true;
+            nodesVisible.instanceColor.needsUpdate = true;
+            nodesHidden.instanceMatrix.needsUpdate = true;
+            nodesHidden.instanceColor.needsUpdate = true;
+            // Filter edges: hide dashed edges
+            let evi = 0,
+                ehi = 0;
+            for (let i = 0; i < ei; i++) {
+                const e = graph.edges[i];
+                const isDashed = e.dashed;
+                const show = visible || !isDashed;
+                const s = nodeById.get(e.source);
+                if (!s) continue;
+                m.fromArray(baseEdgeMatrices, i * 16);
+                if (show) {
+                    edgesVisible.setMatrixAt(evi, m);
+                    edgesVisible.setColorAt(evi, tintOf(s.branch));
+                    evi++;
+                } else {
+                    edgesHidden.setMatrixAt(ehi, m);
+                    edgesHidden.setColorAt(ehi, tintOf(s.branch));
+                    ehi++;
+                }
+            }
+            edgesVisible.count = evi;
+            edgesHidden.count = ehi;
+            edgesVisible.instanceMatrix.needsUpdate = true;
+            edgesVisible.instanceColor.needsUpdate = true;
+            edgesHidden.instanceMatrix.needsUpdate = true;
+            edgesHidden.instanceColor.needsUpdate = true;
+            // Toggle dashed line group visibility
+            dashedGroup.visible = visible;
+        },
         /**
          * Filter branches by visibility. Nodes/edges of hidden branches are
          * moved to the hidden mesh (opacity 0.1); visible ones stay in the
          * visible mesh (opacity 1.0).
-         * @param {Set<number>|null} visibleBranchIds  null = show all
+         * @param {Set<string>|null} visibleBranchIds  null = show all
          */
         setBranchFilter(visibleBranchIds) {
-            let vi = 0, hi = 0;
+            let vi = 0,
+                hi = 0;
             for (let i = 0; i < graph.nodes.length; i++) {
                 const n = graph.nodes[i];
                 const isVisible = !visibleBranchIds || visibleBranchIds.has(n.branch);
@@ -389,7 +549,8 @@ export function renderGraph(container, graph, opts) {
             nodesHidden.instanceMatrix.needsUpdate = true;
             nodesHidden.instanceColor.needsUpdate = true;
             // edges
-            let evi = 0, ehi = 0;
+            let evi = 0,
+                ehi = 0;
             for (let i = 0; i < ei; i++) {
                 const e = graph.edges[i];
                 const s = nodeById.get(e.source);
@@ -420,11 +581,12 @@ export function renderGraph(container, graph, opts) {
          * @param {number|null} maxDate  timestamp ms, or null
          */
         setDateFilter(minDate, maxDate) {
-            let vi = 0, hi = 0;
+            let vi = 0,
+                hi = 0;
             for (let i = 0; i < graph.nodes.length; i++) {
                 const n = graph.nodes[i];
                 const t = Date.parse(n.date);
-                const inRange = !Number.isFinite(t) || (!minDate || t >= minDate) && (!maxDate || t <= maxDate);
+                const inRange = !Number.isFinite(t) || ((!minDate || t >= minDate) && (!maxDate || t <= maxDate));
                 m.fromArray(baseNodeMatrices, i * 16);
                 if (inRange) {
                     nodesVisible.setMatrixAt(vi, m);
@@ -443,13 +605,14 @@ export function renderGraph(container, graph, opts) {
             nodesHidden.instanceMatrix.needsUpdate = true;
             nodesHidden.instanceColor.needsUpdate = true;
             // edges
-            let evi = 0, ehi = 0;
+            let evi = 0,
+                ehi = 0;
             for (let i = 0; i < ei; i++) {
                 const e = graph.edges[i];
                 const s = nodeById.get(e.source);
                 if (!s) continue;
                 const t = Date.parse(s.date);
-                const inRange = !Number.isFinite(t) || (!minDate || t >= minDate) && (!maxDate || t <= maxDate);
+                const inRange = !Number.isFinite(t) || ((!minDate || t >= minDate) && (!maxDate || t <= maxDate));
                 m.fromArray(baseEdgeMatrices, i * 16);
                 if (inRange) {
                     edgesVisible.setMatrixAt(evi, m);
@@ -468,7 +631,11 @@ export function renderGraph(container, graph, opts) {
             edgesHidden.instanceMatrix.needsUpdate = true;
             edgesHidden.instanceColor.needsUpdate = true;
         },
-        dispose() { cancelAnimationFrame(raf); controls.dispose(); renderer.dispose(); },
+        dispose() {
+            cancelAnimationFrame(raf);
+            controls.dispose();
+            renderer.dispose();
+        },
     };
     // Expose handles for debugging/inspection from the browser dev tools.
     // NOTE: this runs in the browser — never reference `process.env` here

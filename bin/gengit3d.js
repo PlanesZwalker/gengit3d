@@ -38,6 +38,21 @@ import { layoutGraph, layoutGraphForView, relax } from '../src/layout3d.js';
 import { buildSimilarEdges } from '../src/similar-commits.js';
 
 const execFileP = promisify(execFile);
+
+// Find git executable: prefer PATH, fall back to common Windows locations
+function findGit() {
+    const candidates = [
+        'C:\\Program Files\\Git\\cmd\\git.exe',
+        'C:\\Program Files\\Git\\mingw64\\bin\\git.exe',
+        'C:\\Program Files (x86)\\Git\\cmd\\git.exe',
+    ];
+    for (const c of candidates) {
+        if (existsSync(c)) return c;
+    }
+    return 'git';
+}
+
+const GIT = findGit();
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..');
 
@@ -72,7 +87,7 @@ async function makeGraph(repo, { max = 0, relax: doRelax = false, view = 'topolo
 async function isGitRepo(dir) {
     if (!dir || !existsSync(dir)) return false;
     try {
-        await execFileP('git', ['rev-parse', '--git-dir'], { cwd: dir, timeout: 10000 });
+        await execFileP(GIT, ['rev-parse', '--git-dir'], { cwd: dir, timeout: 10000 });
         return true;
     } catch {
         return false;
@@ -125,36 +140,66 @@ async function handleCommit(res, q) {
     try {
         // metadata
         const fmt = ['%H', '%h', '%an', '%ae', '%ad', '%cn', '%ce', '%cd', '%s', '%b'].join(US);
-        const metaOut = await execFileP('git', ['show', '-s', `--format=${fmt}`, '--date=iso-strict', hash],
-            { cwd: repo, maxBuffer: 16 * 1024 * 1024, timeout: 20000 });
+        const metaOut = await execFileP(GIT, ['show', '-s', `--format=${fmt}`, '--date=iso-strict', hash], {
+            cwd: repo,
+            maxBuffer: 16 * 1024 * 1024,
+            timeout: 20000,
+        });
         const [full, short, an, ae, ad, cn, ce, cd, subject, body] = metaOut.stdout.split(US);
         // parents (separate, so %P does not clash with the %b body)
-        const pOut = await execFileP('git', ['show', '-s', '--format=%P', hash], { cwd: repo, timeout: 20000 });
+        const pOut = await execFileP(GIT, ['show', '-s', '--format=%P', hash], { cwd: repo, timeout: 20000 });
         const parents = (pOut.stdout.trim() || '').split(/\s+/).filter(Boolean);
         // changed files (numstat)
-        const statOut = await execFileP('git', ['show', '--numstat', '--format=', hash],
-            { cwd: repo, maxBuffer: 64 * 1024 * 1024, timeout: 30000 });
-        const files = statOut.stdout.split('\n').filter(Boolean).map((line) => {
-            const [add, del, ...rest] = line.split('\t');
-            return { added: add === '-' ? null : parseInt(add, 10), deleted: del === '-' ? null : parseInt(del, 10), path: rest.join('\t') };
+        const statOut = await execFileP(GIT, ['show', '--numstat', '--format=', hash], {
+            cwd: repo,
+            maxBuffer: 64 * 1024 * 1024,
+            timeout: 30000,
         });
+        const files = statOut.stdout
+            .split('\n')
+            .filter(Boolean)
+            .map(line => {
+                const [add, del, ...rest] = line.split('\t');
+                return {
+                    added: add === '-' ? null : parseInt(add, 10),
+                    deleted: del === '-' ? null : parseInt(del, 10),
+                    path: rest.join('\t'),
+                };
+            });
         // patch (optional, truncated)
         let patch = '';
         let patchTruncated = false;
         if (wantPatch) {
-            const p = await execFileP('git', ['show', '--patch', '--no-color', '--format=', hash],
-                { cwd: repo, maxBuffer: 128 * 1024 * 1024, timeout: 30000 });
+            const p = await execFileP(GIT, ['show', '--patch', '--no-color', '--format=', hash], {
+                cwd: repo,
+                maxBuffer: 128 * 1024 * 1024,
+                timeout: 30000,
+            });
             patch = p.stdout;
-            if (patch.length > maxPatch) { patch = patch.slice(0, maxPatch); patchTruncated = true; }
+            if (patch.length > maxPatch) {
+                patch = patch.slice(0, maxPatch);
+                patchTruncated = true;
+            }
         }
         const totalAdded = files.reduce((s, f) => s + (f.added || 0), 0);
         const totalDeleted = files.reduce((s, f) => s + (f.deleted || 0), 0);
         sendJson(res, 200, {
-            repo, hash: full, short, author: an, email: ae, date: ad,
-            committer: cn, committerEmail: ce, commitDate: cd,
-            subject, body, parents, files,
+            repo,
+            hash: full,
+            short,
+            author: an,
+            email: ae,
+            date: ad,
+            committer: cn,
+            committerEmail: ce,
+            commitDate: cd,
+            subject,
+            body,
+            parents,
+            files,
             stats: { files: files.length, added: totalAdded, deleted: totalDeleted },
-            patch, patchTruncated,
+            patch,
+            patchTruncated,
         });
     } catch (e) {
         const msg = (e.stderr || e.message || '').toString().slice(0, 300);
@@ -224,7 +269,7 @@ async function handleClone(res, q) {
     if (depth > 0) args.push('--depth', String(depth));
     args.push(url, dest);
     try {
-        await execFileP('git', args, { timeout: 300000, maxBuffer: 64 * 1024 * 1024 });
+        await execFileP(GIT, args, { timeout: 300000, maxBuffer: 64 * 1024 * 1024 });
     } catch (e) {
         return sendJson(res, 500, {
             error: `git clone failed: ${(e.stderr || e.message || '').toString().slice(0, 400)}`,
