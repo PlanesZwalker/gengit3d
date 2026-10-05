@@ -67,6 +67,9 @@
     #gengit3d-legend .list .item .count { color: var(--muted); font-size: 10px; }
     #gengit3d-legend .list .item.hidden-branch .name { text-decoration: line-through; opacity: 0.5; }
     #gengit3d-legend .list .item.hidden-branch .swatch { opacity: 0.3; }
+    #gengit3d-legend .list .item .tip-badge { font-size: 9px; padding: 1px 4px; border-radius: 3px; margin-left: 4px; flex-shrink: 0; }
+    #gengit3d-legend .list .item .tip-badge.stash { background: #ff8c4233; color: #ff8c42; border: 1px solid #ff8c4255; }
+    #gengit3d-legend .list .item .tip-badge.empty { background: #8b93a733; color: #8b93a7; border: 1px solid #8b93a755; }
     #gengit3d-legend .empty { color: var(--muted); font: 11px monospace; padding: 12px; }
 
     /* commit details panel */
@@ -115,6 +118,7 @@
       <option value="real-branches">real branches (cylindrical)</option>
     </select>
     <label title="rotate the view automatically"><input id="gengit3d-rotate" type="checkbox" /> rotate</label>
+    <label title="show stash/empty-branch tip markers"><input id="gengit3d-tips" type="checkbox" checked /> tips</label>
     <button id="gengit3d-legend-toggle" title="show/hide branch legend">Branches</button>
   </div>
 
@@ -278,15 +282,19 @@
         legendList.innerHTML = slice.map((b) => {
             const visible = branchVisibility.get(b.id) !== false;
             const colorHex = '#' + (b.color ?? 0x4f9dff).toString(16).padStart(6, '0');
+            const isStash = /^stash@\{\d+\}$/.test(b.name);
+            const isEmpty = b.reach > 0 && b.commits <= 1;
+            const tipBadge = isStash ? '<span class="tip-badge stash">stash</span>' : (isEmpty ? '<span class="tip-badge empty">empty</span>' : '');
             return `<div class="item${visible ? '' : ' hidden-branch'}" data-branch="${b.id}">` +
                 `<input type="checkbox" ${visible ? 'checked' : ''} />` +
                 `<span class="swatch" style="background:${colorHex}"></span>` +
                 `<span class="name" title="${esc(b.name)}">${esc(b.name)}</span>` +
+                tipBadge +
                 `<span class="count">${b.commits}</span></div>`;
         }).join('') + (hasMore ? `<div class="item load-more" style="justify-content:center;color:var(--muted);cursor:pointer;">Show more (${filtered.length - (page + 1) * PAGE_SIZE} more)</div>` : '');
         // event delegation: single listener on the container
         legendList.querySelectorAll('.item[data-branch]').forEach((el) => {
-            const bid = parseInt(el.dataset.branch, 10);
+            const bid = el.dataset.branch; // branch ids are strings (e.g. 'dev', 'branch_0')
             el.addEventListener('click', (e) => {
                 if (e.target.tagName === 'INPUT') return;
                 const cb = el.querySelector('input');
@@ -441,7 +449,23 @@
 
     renderBtn.addEventListener('click', renderFromInput);
     input.addEventListener('keydown', (e) => { if (e.key === 'Enter') renderFromInput(); });
+    viewSel.addEventListener('change', () => {
+        if (input.value.trim()) {
+            renderFromInput();
+        } else if (currentGraph && currentSource && currentSource.repo) {
+            const view = viewSel.value || 'topological';
+            fetchGraph('/api/graph', 'repo=' + encodeURIComponent(currentSource.repo) + '&view=' + view,
+                (d) => `${d.source.repo} → ${d.nodes.length} commits, ${d.branches.length} branches`);
+        }
+    });
     rotateEl.addEventListener('change', () => { if (current) current.setAutoRotate(rotateEl.checked); });
+
+    // tips toggle: show/hide stash/empty-branch tip markers
+    const tipsEl = document.getElementById('gengit3d-tips');
+    tipsEl.addEventListener('change', () => {
+        if (!current || !current.setTipsVisible) return;
+        current.setTipsVisible(tipsEl.checked);
+    });
 
     // theme <select>
     themeSel.innerHTML = Object.entries(THEMES)

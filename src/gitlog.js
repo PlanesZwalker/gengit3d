@@ -7,8 +7,24 @@
 
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { existsSync } from 'node:fs';
 
 const execFileP = promisify(execFile);
+
+// Find git executable: prefer PATH, fall back to common Windows locations
+function findGit() {
+    const candidates = [
+        'C:\\Program Files\\Git\\cmd\\git.exe',
+        'C:\\Program Files\\Git\\mingw64\\bin\\git.exe',
+        'C:\\Program Files (x86)\\Git\\cmd\\git.exe',
+    ];
+    for (const c of candidates) {
+        if (existsSync(c)) return c;
+    }
+    return 'git';
+}
+
+const GIT = findGit();
 
 const FIELD_SEP = '\x1f'; // unit separator
 const RECORD_SEP = '\x1e'; // record separator
@@ -29,7 +45,7 @@ export async function rawGitLog(repoDir, { max = 0 } = {}) {
         '--topo-order',
     ];
     if (max > 0) args.push(`-n${max}`);
-    const { stdout } = await execFileP('git', args, {
+    const { stdout } = await execFileP(GIT, args, {
         cwd: repoDir,
         maxBuffer: 256 * 1024 * 1024,
     });
@@ -43,7 +59,7 @@ export async function rawGitLog(repoDir, { max = 0 } = {}) {
  */
 export async function getBranchTips(repoDir) {
     const { stdout } = await execFileP(
-        'git',
+        GIT,
         ['for-each-ref', '--format=%(objectname) %(refname:short)', 'refs/heads', 'refs/remotes'],
         { cwd: repoDir, maxBuffer: 16 * 1024 * 1024 }
     );
@@ -70,7 +86,7 @@ export async function getBranchTips(repoDir) {
  * @returns {Promise<Map<string, string>>} hash -> branch name
  */
 export async function getCommitBranches(repoDir) {
-    const { stdout } = await execFileP('git', ['log', '--all', '--format=%H %D', '--date=iso-strict'], {
+    const { stdout } = await execFileP(GIT, ['log', '--all', '--format=%H %D', '--date=iso-strict'], {
         cwd: repoDir,
         maxBuffer: 256 * 1024 * 1024,
     });
@@ -123,7 +139,7 @@ export async function getCommitBranches(repoDir) {
  * @returns {Promise<Map<string, string[]>>} hash -> array of child hashes
  */
 export async function getChildrenMap(repoDir) {
-    const { stdout } = await execFileP('git', ['rev-list', '--all', '--children'], {
+    const { stdout } = await execFileP(GIT, ['rev-list', '--all', '--children'], {
         cwd: repoDir,
         maxBuffer: 256 * 1024 * 1024,
     });
@@ -144,7 +160,7 @@ export async function getChildrenMap(repoDir) {
  * @returns {Promise<Array<{name:string,hash:string,message:string}>>}
  */
 export async function getStashes(repoDir) {
-    const { stdout } = await execFileP('git', ['stash', 'list', '--format=%H%x1f%gd%x1f%s'], {
+    const { stdout } = await execFileP(GIT, ['stash', 'list', '--format=%H%x1f%gd%x1f%s'], {
         cwd: repoDir,
         maxBuffer: 16 * 1024 * 1024,
     });
@@ -201,7 +217,7 @@ export async function getCommitsByBranch(repoDir) {
     for (const br of branches) {
         let revList;
         try {
-            const { stdout } = await execFileP('git', ['rev-list', br.name], {
+            const { stdout } = await execFileP(GIT, ['rev-list', br.name], {
                 cwd: repoDir,
                 maxBuffer: 256 * 1024 * 1024,
             });
@@ -394,6 +410,53 @@ export function parseGitLog(
         b.commits++;
         if (!b.tip) b.tip = n.id;
     }
+
+    // ── Synthetic tip nodes for stashes and 0-commit branches ──
+    // These refs point to commits already owned by other branches, so they
+    // have 0 rendered nodes. We add a synthetic tip node + dashed edge so
+    // they are visible in the 3D graph.
+    const isStashName = name => /^stash@\{\d+\}$/.test(name);
+    const nodeHashes = new Set(nodes.map(n => n.id));
+    const syntheticTips = [];
+    for (const br of realBranches) {
+        const b = branchMap.get(br.name);
+        if (!b) continue;
+        // Only add synthetic tip if the branch has 0 rendered commits AND
+        // its tip commit is already in the graph (owned by another branch).
+        if (b.commits === 0 && nodeHashes.has(br.hash)) {
+            const tipCommit = byHash.get(br.hash);
+            const tipNode = {
+                id: br.hash,
+                short: br.hash.slice(0, 7),
+                author: tipCommit ? tipCommit.author : '(ref)',
+                email: tipCommit ? tipCommit.email : '',
+                date: tipCommit ? tipCommit.date : '',
+                subject: isStashName(br.name) ? `stash: ${br.name}` : `empty branch: ${br.name}`,
+                parents: tipCommit ? tipCommit.parents : [],
+                branchName: br.name,
+                depth: tipCommit ? tipCommit.depth : 0,
+                branch: br.name,
+                x: 0,
+                y: 0,
+                z: 0,
+                isTip: true,
+                tipType: isStashName(br.name) ? 'stash' : 'empty-branch',
+            };
+            syntheticTips.push(tipNode);
+            // Dashed edge from tip to its parent (the commit it points to)
+            if (tipCommit && tipCommit.parents.length > 0) {
+                edges.push({ source: br.hash, target: tipCommit.parents[0], dashed: true });
+            }
+            b.commits = 1; // count the synthetic tip
+            b.tip = br.hash;
+        }
+    }
+    // Add synthetic tips to nodes array
+    for (const tip of syntheticTips) {
+        nodes.push(tip);
+        byHash.set(tip.id, tip);
+    }
+
     const branches = [...branchMap.values()];
 
     return { nodes, edges, branches, head, repoDir, generatedAt: new Date().toISOString() };

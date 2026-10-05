@@ -89,6 +89,14 @@ export function layoutGraph(
         } else {
             n.y = (n.depth / maxDepth - 0.5) * height;
         }
+        // Synthetic tip nodes (stash/empty-branch): offset slightly so they
+        // don't overlap with the commit they point to.
+        if (n.isTip) {
+            const tipOffset = 8;
+            n.x += Math.cos(angle) * tipOffset;
+            n.z += Math.sin(angle) * tipOffset;
+            n.y += tipOffset * 0.5;
+        }
         n.lane = n.lane ?? 0; // legacy field kept for compatibility
     }
 
