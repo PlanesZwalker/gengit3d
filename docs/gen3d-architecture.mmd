@@ -1,0 +1,96 @@
+flowchart TD
+    subgraph Overview[Overview — Générateur 3D GenGit3D]
+        PURPOSE["Purpose:<br/>→ Visualiser structure repo Git<br/>→ Générer représentation 3D<br/>→ Analyser historiques commits<br/>→ Montrer relations<br/>→ Explorer code interactively"]
+        TARGETS["Targets:<br/>→ Git repositories<br/>→ Monorepos supportés<br/>→ Multi-repo capable<br/>→ Large repos optimisés<br/>→ Custom repo configs"]
+    end
+
+    subgraph InputPhase[Input phase — source données]
+        GIT_REPO_INPUT["Git repo input<br/>→ Clone/fetch repo<br/>→ Parse git objects<br/>→ Extract commit history<br/>→ Build tree structure<br/>→ Handle submodules si présents"]
+        CONFIG_INPUT["Config input<br/>→ User configuration<br/>→ Display preferences<br/>→ Visualization options<br/>→ Filter settings<br/>→ Custom mappings"]
+        OPTIONAL_INPUT["Optional inputs<br/>→ External data sources<br/>→ Custom metadata<br/>→ Annotations<br/>→ Labels/tags<br/>→ Custom styling"]
+    end
+
+    subgraph ProcessingPhase[Processing phase — analyse + génération]
+        ANALYSIS["Analysis phase<br/>→ Commit history analysis<br/>→ Branch analysis<br/>→ Contributor analysis<br/>→ File change patterns<br/>→ Dependency analysis<br/>→ Complexity metrics"]
+        STRUCTURE_EXTRACTION["Structure extraction<br/>→ Tree structure from commits<br/>→ File hierarchy<br/>→ Directory structure<br/>→ Module boundaries<br/>→ Import graphs<br/>→ Dependency graphs"]
+        METRICS_CALCULATION["Metrics calculation<br/>→ Code metrics<br/>→ Complexity scores<br/>→ Change frequency<br/>→ Author contributions<br/>→ Time patterns<br/>→ Quality indicators"]
+        3D_MODEL_GENERATION["3D model generation<br/>→ Generate 3D geometry<br/>→ Position nodes/branches<br/>→ Apply color/shape coding<br/>→ Create textures/materials<br/>→ Build scene graph<br/>→ Optimize for rendering"]
+    end
+
+    subgraph RenderingPhase[Rendering phase — visualisation]
+        SCENE_SETUP["Scene setup<br/>→ 3D scene creation<br/>→ Camera positioning<br/>→ Lighting setup<br/>→ Environment setup<br/>→ Initial view configuration"]
+        INTERACTIVE_VIEWER["Interactive viewer<br/>→ 3D navigation controls<br/>→ Zoom/pan/rotate<br/>→ Selection interaction<br/>→ Detail on hover/click<br/>→ Search/navigation"]
+        VIEW_OPTIONS["View options<br/>→ Multiple views:<br/>  • Timeline view<br/>  • Tree view<br/>  • Graph view<br/>  • Heat map view<br/>→ Custom views<br/>→ Saved views"]
+        EXPORT["Export options<br/>→ Image export (PNG, JPG)<br/>→ Video export (animated)<br/>→ 3D model export (glTF, etc.)<br/>→ JSON data export<br/>→ Report generation"]
+    end
+
+    subgraph OutputPhase[Output phase — résultats]
+        VISUALIZATION_OUTPUT["Visualization output<br/>→ Interactive 3D visualization<br/>→ Static images<br/>→ Video presentations<br/>→ Shareable links<br/>→ Embedding options"]
+        DATA_OUTPUT["Data output<br/>→ Structured data export<br/>→ Analysis reports<br/>→ Metrics dashboards<br/>→ CSV/JSON tables<br/>→ Custom data formats"]
+        INSIGHTS_OUTPUT["Insights output<br/>→ Automatically generated insights<br/>→ Pattern detection<br/>→ Anomaly detection<br/>→ Recommendation generation<br/>→ Summary generation"]
+    end
+
+    subgraph TechnicalStack[Technical stack]
+        LANGUAGE_STACK["Language/stack:<br/>→ TypeScript/JavaScript<br/>→ Node.js backend<br/>→ WebGL/Three.js frontend<br/>→ Git parsing libraries<br/>→ Data processing libs"]
+        GRAPHICS_STACK["Graphics stack:<br/>→ Three.js 3D engine<br/>→ WebGL rendering<br/>→ Custom shaders si needed<br/>→ Post-processing effects<br/>→ Performance optimization"]
+        DATA_STACK["Data stack:<br/>→ Git data parsing<br/>→ Data storage/retrieval<br/>→ Caching layer<br/>→ Streaming processing<br/>→ Batch processing"]
+        DEPLOYMENT_STACK["Deployment stack:<br/>→ Web app hosting<br/>→ Processing workers<br/>→ Storage services<br/>→ CDN for assets<br/>→ Scaling configuration"]
+    end
+
+    subgraph Integration[Integration capabilities]
+        GIT_INTEGRATION["Git integration<br/>→ GitHub integration<br/>→ GitLab integration<br/>→ Bitbucket integration<br/>→ Local git repos<br/>→ Custom git hosting"]
+        TOOLS_INTEGRATION["Tools integration<br/>→ IDE plugins<br/>→ CI/CD integration<br/>→ Code review tools<br/>→ Project management tools<br/>→ Reporting tools"]
+        DATA_INTEGRATION["Data integration<br/>→ CI data import<br/>→ Issue tracker import<br/>→ Code review data<br/>→ Testing data<br/>→ Custom data sources"]
+    end
+
+    subgraph PerformancePerformance[Performance considerations]
+        LARGE_REPOS["Large repo handling:<br/>→ Streaming parsing<br/>→ Incremental processing<br/>→ Caching strategies<br/>→ Level of detail rendering<br/>→ Progressive loading<br/>→ Memory management"]
+        RENDERING_PERFORMANCE["Rendering performance:<br/>→ Efficient scene graph<br/>→ LOD system<br/>→ Frustum culling<br/>→ Batch rendering<br/>→ GPU optimization<br/>→ Fallback for low-end"]
+        USER_EXPERIENCE["User experience:<br/>→ Fast initial load<br/>→ Smooth navigation<br/>→ Responsive interaction<br/>→ Clear visual hierarchy<br/>→ Intuitive controls<br/>→ Progress indication"]
+    end
+
+    GIT_REPO_INPUT --> ANALYSIS
+    CONFIG_INPUT --> ANALYSIS
+    OPTIONAL_INPUT --> ANALYSIS
+
+    ANALYSIS --> STRUCTURE_EXTRACTION
+    STRUCTURE_EXTRACTION --> METRICS_CALCULATION
+    METRICS_CALCULATION --> 3D_MODEL_GENERATION
+
+    3D_MODEL_GENERATION --> SCENE_SETUP
+    SCENE_SETUP --> INTERACTIVE_VIEWER
+    INTERACTIVE_VIEWER --> VIEW_OPTIONS
+    VIEW_OPTIONS --> EXPORT
+
+    SCENE_SETUP -->|rend | VISUALIZATION_OUTPUT
+    INTERACTIVE_VIEWER -->|rend | DATA_OUTPUT
+    VIEW_OPTIONS -->|rend | INSIGHTS_OUTPUT
+    EXPORT -->|produit | VISUALIZATION_OUTPUT
+    EXPORT -->|produit | DATA_OUTPUT
+    EXPORT -->|produit | INSIGHTS_OUTPUT
+
+    TECHNICAL_STACK -->|implemente | Overview
+    TECHNICAL_STACK -->|rend possible | PROCESSING
+    TECHNICAL_STACK -->|rend possible | RENDERING
+
+    INTEGRATION -->|étend | OVERALL_CAPABILITIES
+
+    PERFORMANCE -->|optimise | PROCESSING
+    PERFORMANCE -->|optimise | RENDERING
+
+    classDef overview fill:#3498db,color:#fff
+    class Def input fill:#2ecc71,color:#fff
+    class Def processing fill:#f39c12,color:#fff
+    class Def rendering fill:#9b59b6,color:#fff
+    class Def output fill:#1abc9c,color:#fff
+    class Def tech fill:#e67e22,color:#fff
+    class Def integration fill:#e74c3c,color:#fff
+    class Def performance fill:#c0392b,color:#fff
+    class OVERVIEW,PURPOSE,TARGETS overview
+    class GIT_REPO_INPUT,CONFIG_INPUT,OPTIONAL_INPUT input
+    class ANALYSIS,STRUCTURE_EXTRACTION,METRICS_CALCULATION,3D_MODEL_GENERATION processing
+    class SCENE_SETUP,INTERACTIVE_VIEWER,VIEW_OPTIONS,EXPORT rendering
+    class VISUALIZATION_OUTPUT,DATA_OUTPUT,INSIGHTS_OUTPUT output
+    class LANGUAGE_STACK,GRAPHICS_STACK,DATA_STACK,DEPLOYMENT_STACK tech
+    class GIT_INTEGRATION,TOOLS_INTEGRATION,DATA_INTEGRATION integration
+    class LARGE_REPOS,RENDERING_PERFORMANCE,USER_EXPERIENCE performance

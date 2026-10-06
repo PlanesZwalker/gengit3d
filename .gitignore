@@ -1,0 +1,16 @@
+# Dependencies
+node_modules/
+
+# Generated graph artifact (~7 MB, produced by `parse`)
+gengit3d.graph.json
+
+# Logs
+*.log
+npm-debug.log*
+
+# Clones made by /api/clone
+gengit3d-clones/
+
+# OS / editor
+.DS_Store
+Thumbs.db
