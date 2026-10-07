@@ -1,7 +1,5 @@
 # GenGit3D
 
-![GenGit3D Demo](demo-gengit3d.gif)
-
 3D git commit-graph visualizer. Parses `git log` into a graph (nodes = commits,
 edges = parent→child, lanes = branches) and renders it with **three.js** +
 OrbitControls.
@@ -9,56 +7,6 @@ OrbitControls.
 Standalone and self-contained: the only runtime dependency is `three`.
 
 Built from scratch — no dependency on the separate GenGit (LLM-token DAG) project.
-
-## Features
-
-- **6 layouts** — `topological`, `chronological`, `author`, `radial`, `queue`, `real-branches`
-- **Real branch detection** — reads git refs (`for-each-ref` + `rev-list`) instead of
-  guessing from topology, so branches show their real names
-- **Unique branch colors** — farthest-point sampling in OKLab space (perceptually uniform)
-- **Commit details** — click a node for author/date/message/files/colorized diff
-- **Dated timeline** — `y` axis is the real commit date (monotone), with `CSS2DRenderer` ticks
-- **6 themes** — 3 dark (`midnight`, `slate`, `neon`) + 3 light (`daylight`, `paper`, `solarized`)
-- **Branch & date filtering** — hidden items drop to opacity 0.1 (not grayed out)
-- **Stash + empty-branch tips** — synthetic nodes with dashed edges
-- **Any repo** — type a local path or a git URL in the UI, no CLI restart needed
-
-### Layouts
-
-![Topological](demo-layout-topological.gif)
-![Chronological](demo-layout-chronological.gif)
-![Author](demo-layout-author.gif)
-![Radial](demo-layout-radial.gif)
-![Queue](demo-layout-queue.gif)
-![Real Branches](demo-layout-real-branches.gif)
-
-### Branch Colors
-
-![Branch Colors](demo-branch-colors.gif)
-
-### Commit Details
-
-![Commit Details](demo-commit-details.gif)
-
-### Timeline
-
-![Timeline](demo-timeline.gif)
-
-### Themes
-
-![Themes](demo-themes.gif)
-
-### Filtering
-
-![Filtering](demo-filtering.gif)
-
-### Stash & Empty-Branch Tips
-
-![Stash Tips](demo-stash-tips.gif)
-
-### Any Repo
-
-![Any Repo](demo-any-repo.gif)
 
 ## Install
 
@@ -131,6 +79,8 @@ change le layout 3D :
 | `queue` | Colonnes comme `git log --graph` | x = branche, y = date |
 | `real-branches` | Vraies branches git | Cylindrique, angle = branche réelle |
 
+![6 vues en séquence](demo-views.gif)
+
 **Implémentation** (`src/layout3d.js`) : `layoutGraphForView(graph, view)` dispatche
 vers la fonction de layout correspondante ; chaque vue mute `node.x/y/z` en place.
 L'axe `y` est la date réelle (timeline monotone) quand disponible.
@@ -143,6 +93,8 @@ heuristique de topologie BFS.
 
 Chaque branche reçoit une couleur **unique et visuellement distincte** via
 **farthest-point sampling dans l'espace OKLab** (perceptuellement uniforme).
+
+![Couleurs de branches distinctes](demo-branch-colors.gif)
 
 **Algorithme** (`src/branch-colors.js`) :
 
@@ -174,6 +126,8 @@ topologique) → timeline monotone, plus ancien en bas. 7 graduations datées
 
 Le clic est distingué d'un drag d'orbite (delta > 4 px ⇒ pas un clic). Le commit
 sélectionné est entouré d'un halo (`wireframe`) et sa sphère est agrandie ×1.7.
+
+![Clic sur un commit → détails + timeline](demo-commit-details.gif)
 
 ## API
 
@@ -226,6 +180,28 @@ illisible, tous deux corrigés dans `themes.js` :
    teinte claire : `recede: 0x55606f`, `recedeAmount: 0.45`.
 
 Ajouter un thème = une entrée dans `THEMES` ; le `<select>` et le chrome suivent.
+
+![6 thèmes en séquence](demo-themes.gif)
+
+## Filtrage des branches
+
+Le panneau de légende permet de filtrer les branches par nom (recherche) et par date.
+Les branches masquées tombent à une opacité de 0.1 (pas grisées).
+
+![Filtrage des branches](demo-filtering.gif)
+
+## Stash + empty-branch tips
+
+Les commits stash et les branches vides sont affichés comme des nœuds synthétiques
+avec des arêtes en pointillés.
+
+![Stash et empty-branch tips](demo-stash-tips.gif)
+
+## N'importe quel repo
+
+Tapez un chemin local ou une git URL dans l'interface, sans redémarrer le CLI.
+
+![N'importe quel repo](demo-any-repo.gif)
 
 ## Docker
 
