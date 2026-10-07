@@ -1,5 +1,9 @@
 # GenGit3D
 
+<p align="center">
+  <img src="icon.png" width="128" height="128" alt="GenGit3D Logo" />
+</p>
+
 3D git commit-graph visualizer. Parses `git log` into a graph (nodes = commits,
 edges = parent→child, lanes = branches) and renders it with **three.js** +
 OrbitControls.

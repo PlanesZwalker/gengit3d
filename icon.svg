@@ -1,0 +1,70 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <!-- Sphère bleue (bas, premier plan) -->
+    <radialGradient id="sphere-blue" cx="35%" cy="30%" r="60%">
+      <stop offset="0%" stop-color="#7ec8ff"/>
+      <stop offset="40%" stop-color="#4f9dff"/>
+      <stop offset="100%" stop-color="#1a5fb4"/>
+    </radialGradient>
+    <!-- Sphère verte -->
+    <radialGradient id="sphere-green" cx="35%" cy="30%" r="60%">
+      <stop offset="0%" stop-color="#7ee8a0"/>
+      <stop offset="40%" stop-color="#57c785"/>
+      <stop offset="100%" stop-color="#1f8a4c"/>
+    </radialGradient>
+    <!-- Sphère orange -->
+    <radialGradient id="sphere-orange" cx="35%" cy="30%" r="60%">
+      <stop offset="0%" stop-color="#ffb37a"/>
+      <stop offset="40%" stop-color="#ff8c42"/>
+      <stop offset="100%" stop-color="#cc5a1a"/>
+    </radialGradient>
+    <!-- Sphère rouge (haut, arrière-plan) -->
+    <radialGradient id="sphere-red" cx="35%" cy="30%" r="60%">
+      <stop offset="0%" stop-color="#ff8a9a"/>
+      <stop offset="40%" stop-color="#e05c75"/>
+      <stop offset="100%" stop-color="#a3271e"/>
+    </radialGradient>
+    <!-- Tube de la branche -->
+    <linearGradient id="tube-grad" x1="0%" y1="100%" x2="0%" y2="0%">
+      <stop offset="0%" stop-color="#4f9dff" stop-opacity="0.9"/>
+      <stop offset="50%" stop-color="#57c785" stop-opacity="0.7"/>
+      <stop offset="100%" stop-color="#e05c75" stop-opacity="0.5"/>
+    </linearGradient>
+    <!-- Ombre portée -->
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Fond -->
+  <rect width="512" height="512" rx="96" fill="#0b0b10"/>
+
+  <!-- Branche racine courbe (tube) -->
+  <path d="M 256 440 C 256 380, 256 320, 256 260 C 256 200, 256 140, 256 80"
+        stroke="url(#tube-grad)" stroke-width="8" fill="none" stroke-linecap="round" opacity="0.6"/>
+
+  <!-- Sphère bleue (bas, premier plan, plus grande) -->
+  <circle cx="256" cy="420" r="48" fill="url(#sphere-blue)" filter="url(#glow)"/>
+  <ellipse cx="240" cy="400" rx="12" ry="8" fill="white" opacity="0.3"/>
+
+  <!-- Sphère verte -->
+  <circle cx="256" cy="320" r="38" fill="url(#sphere-green)" filter="url(#glow)"/>
+  <ellipse cx="243" cy="305" rx="9" ry="6" fill="white" opacity="0.3"/>
+
+  <!-- Sphère orange -->
+  <circle cx="256" cy="220" r="30" fill="url(#sphere-orange)" filter="url(#glow)"/>
+  <ellipse cx="246" cy="208" rx="7" ry="5" fill="white" opacity="0.3"/>
+
+  <!-- Sphère rouge (haut, arrière-plan, plus petite) -->
+  <circle cx="256" cy="130" r="24" fill="url(#sphere-red)" filter="url(#glow)"/>
+  <ellipse cx="248" cy="121" rx="5" ry="4" fill="white" opacity="0.3"/>
+
+  <!-- Lignes de connexion entre sphères (arêtes) -->
+  <line x1="256" y1="396" x2="256" y2="344" stroke="#4f9dff" stroke-width="3" opacity="0.4"/>
+  <line x1="256" y1="296" x2="256" y2="244" stroke="#57c785" stroke-width="2.5" opacity="0.35"/>
+  <line x1="256" y1="196" x2="256" y2="150" stroke="#ff8c42" stroke-width="2" opacity="0.3"/>
+</svg>

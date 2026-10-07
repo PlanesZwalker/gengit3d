@@ -25,6 +25,7 @@
     "commit",
     "history"
   ],
+  "icon": "icon.png",
   "activationEvents": [
     "onCommand:gengit3d.open",
     "onCommand:gengit3d.openFile"
@@ -117,6 +118,7 @@
     "@types/node": "^20.11.0",
     "@types/vscode": "^1.85.0",
     "esbuild": "^0.20.0",
+    "sharp": "^0.35.5",
     "vsce": "^2.15.0"
   }
 }
