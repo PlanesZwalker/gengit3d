@@ -28,7 +28,8 @@
   "icon": "icon.png",
   "activationEvents": [
     "onCommand:gengit3d.open",
-    "onCommand:gengit3d.openFile"
+    "onCommand:gengit3d.openFile",
+    "onStartupFinished"
   ],
   "main": "./dist/extension.js",
   "contributes": {
