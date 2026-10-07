@@ -1,6 +1,6 @@
 # GenGit3D
 
-https://github.com/PlanesZwalker/gengit3d/assets/demo-gengit3d.webm
+![GenGit3D Demo](demo-gengit3d.gif)
 
 3D git commit-graph visualizer. Parses `git log` into a graph (nodes = commits,
 edges = parent→child, lanes = branches) and renders it with **three.js** +
