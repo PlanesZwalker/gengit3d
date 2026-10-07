@@ -163,10 +163,10 @@ persistant via `localStorage`). Chaque thème contrôle **à la fois** la scène
 
 | Clé | Type | Fond |
 |-----|------|------|
-| `midnight` | dark | `#0b0b10` (défaut) |
+| `midnight` | dark | `#0b0b10` |
 | `slate` | dark | `#141a24` |
 | `neon` | dark | `#06060a` |
-| `daylight` | light | `#eef2f8` |
+| `daylight` | light | `#eef2f8` (défaut) |
 | `paper` | light | `#f6f1e7` |
 | `solarized` | light | `#fdf6e3` |
 

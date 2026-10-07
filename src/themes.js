@@ -153,7 +153,7 @@ export const THEMES = {
     },
 };
 
-export const DEFAULT_THEME = 'midnight';
+export const DEFAULT_THEME = 'daylight';
 
 /** Resolve a theme by name, falling back to the default. */
 export function getTheme(name) {
