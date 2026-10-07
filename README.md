@@ -23,6 +23,43 @@ Built from scratch — no dependency on the separate GenGit (LLM-token DAG) proj
 - **Stash + empty-branch tips** — synthetic nodes with dashed edges
 - **Any repo** — type a local path or a git URL in the UI, no CLI restart needed
 
+### Layouts
+
+![Topological](demo-layout-topological.gif)
+![Chronological](demo-layout-chronological.gif)
+![Author](demo-layout-author.gif)
+![Radial](demo-layout-radial.gif)
+![Queue](demo-layout-queue.gif)
+![Real Branches](demo-layout-real-branches.gif)
+
+### Branch Colors
+
+![Branch Colors](demo-branch-colors.gif)
+
+### Commit Details
+
+![Commit Details](demo-commit-details.gif)
+
+### Timeline
+
+![Timeline](demo-timeline.gif)
+
+### Themes
+
+![Themes](demo-themes.gif)
+
+### Filtering
+
+![Filtering](demo-filtering.gif)
+
+### Stash & Empty-Branch Tips
+
+![Stash Tips](demo-stash-tips.gif)
+
+### Any Repo
+
+![Any Repo](demo-any-repo.gif)
+
 ## Install
 
 ```bash
