@@ -39,7 +39,6 @@ export async function rawGitLog(repoDir, { max = 0 } = {}) {
     const args = [
         'log',
         '--all',
-        'refs/stash',
         `--pretty=format:%H${FIELD_SEP}%P${FIELD_SEP}%an${FIELD_SEP}%ae${FIELD_SEP}%ad${FIELD_SEP}%s${FIELD_SEP}%D%x1e`,
         '--date=iso-strict',
         '--topo-order',
