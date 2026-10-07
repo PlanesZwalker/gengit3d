@@ -89,24 +89,6 @@ La vue `real-branches` lit les vraies refs git (`git rev-list` par ref ; la prem
 ref — locale avant remote — qui atteint un commit le possède) au lieu d'une
 heuristique de topologie BFS.
 
-## Couleurs de branches distinctes
-
-Chaque branche reçoit une couleur **unique et visuellement distincte** via
-**farthest-point sampling dans l'espace OKLab** (perceptuellement uniforme).
-
-![Couleurs de branches distinctes](demo-branch-colors.gif)
-
-**Algorithme** (`src/branch-colors.js`) :
-
-1. Génère un pool de ~2000 candidats HSL (hue doré, saturation/luminosité variées)
-2. Convertit en OKLab
-3. Sélection gloutonne : maximise la distance minimale aux couleurs déjà choisies
-
-```js
-import { assignBranchColors } from './src/branch-colors.js';
-const colorMap = assignBranchColors(graph); // Map<branchId, hex>
-```
-
 ## Clic sur un commit → détails + timeline
 
 **Timeline** : l'axe vertical `y` est la **date réelle** des commits (pas la profondeur
