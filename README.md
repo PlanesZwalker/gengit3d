@@ -79,8 +79,6 @@ change le layout 3D :
 | `queue` | Colonnes comme `git log --graph` | x = branche, y = date |
 | `real-branches` | Vraies branches git | Cylindrique, angle = branche réelle |
 
-![6 vues en séquence](demo-views.gif)
-
 **Implémentation** (`src/layout3d.js`) : `layoutGraphForView(graph, view)` dispatche
 vers la fonction de layout correspondante ; chaque vue mute `node.x/y/z` en place.
 L'axe `y` est la date réelle (timeline monotone) quand disponible.
@@ -108,8 +106,6 @@ topologique) → timeline monotone, plus ancien en bas. 7 graduations datées
 
 Le clic est distingué d'un drag d'orbite (delta > 4 px ⇒ pas un clic). Le commit
 sélectionné est entouré d'un halo (`wireframe`) et sa sphère est agrandie ×1.7.
-
-![Clic sur un commit → détails + timeline](demo-commit-details.gif)
 
 ## API
 
@@ -163,27 +159,19 @@ illisible, tous deux corrigés dans `themes.js` :
 
 Ajouter un thème = une entrée dans `THEMES` ; le `<select>` et le chrome suivent.
 
-![6 thèmes en séquence](demo-themes.gif)
-
 ## Filtrage des branches
 
 Le panneau de légende permet de filtrer les branches par nom (recherche) et par date.
 Les branches masquées tombent à une opacité de 0.1 (pas grisées).
-
-![Filtrage des branches](demo-filtering.gif)
 
 ## Stash + empty-branch tips
 
 Les commits stash et les branches vides sont affichés comme des nœuds synthétiques
 avec des arêtes en pointillés.
 
-![Stash et empty-branch tips](demo-stash-tips.gif)
-
 ## N'importe quel repo
 
 Tapez un chemin local ou une git URL dans l'interface, sans redémarrer le CLI.
-
-![N'importe quel repo](demo-any-repo.gif)
 
 ## Docker
 
