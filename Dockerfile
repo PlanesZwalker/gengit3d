@@ -10,6 +10,7 @@ RUN npm ci --omit=dev
 
 COPY bin/ ./bin/
 COPY src/ ./src/
+COPY vendor/ ./vendor/
 COPY index.html ./
 COPY entrypoint.sh ./
 

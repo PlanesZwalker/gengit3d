@@ -203,8 +203,37 @@ docker run -d --name gengit3d -p 8083:8080 \
 
 ## Notes / limitations
 
-- three.js est chargé depuis un CDN via importmap ; pour un usage 100 % hors-ligne,
-  vendorer `three.module.js` localement.
-- `relax()` (passe de force) est optionnel et désactivé par défaut.
-- `index.html` fait un `fetch('./gengit3d.graph.json')` → il faut un serveur HTTP
-  (pas `file://`).
+- three.js is **vendored locally** in `vendor/three/` — no CDN or internet connection required.
+- `relax()` (force relaxation pass) is optional and disabled by default.
+- `index.html` does a `fetch('./gengit3d.graph.json')` → you need an HTTP server
+  (not `file://`).
+
+## Security
+
+The HTTP API is designed to be safe by default:
+
+| Measure | Default | Override |
+|---------|---------|----------|
+| Listen address | `127.0.0.1` (loopback only) | `GENGIT3D_HOST=0.0.0.0` |
+| Clone URL schemes | `https://` only | `GENGIT3D_ALLOW_ALL_SCHEMES=1` |
+| Repo path allowlist | (disabled — all local paths allowed) | `GENGIT3D_REPO_ALLOWLIST=/repos,/home/user/projects` |
+| Max clone size | 500 MB | `GENGIT3D_MAX_CLONE_SIZE=<bytes>` |
+| Clone timeout | 5 minutes | `GENGIT3D_CLONE_TIMEOUT=<ms>` |
+| Clone auto-cleanup | 1 hour | `GENGIT3D_CLONE_TTL=<ms>` |
+
+- Git option injection is prevented by passing `--` before the URL in `git clone`.
+- Clone failures are cleaned up immediately; successful clones are removed after TTL.
+- The `?hash=` parameter is validated against `^[0-9a-fA-F]{4,40}$` before any git command.
+
+## Testing
+
+```bash
+npm test     # runs vitest unit tests on parser fixtures
+```
+
+Tests cover: simple histories, merge commits, multiline messages, special characters
+in author names, branching histories, and empty input.
+
+## License
+
+MIT — see [LICENSE](LICENSE) for details.

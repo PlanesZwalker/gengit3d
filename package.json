@@ -9,10 +9,14 @@
   "scripts": {
     "parse": "node bin/gengit3d.js parse",
     "serve": "node bin/gengit3d.js serve",
-    "start": "node bin/gengit3d.js"
+    "start": "node bin/gengit3d.js",
+    "test": "vitest run"
   },
   "dependencies": {
     "three": "^0.160.0"
+  },
+  "devDependencies": {
+    "vitest": "^1.2.0"
   },
   "license": "MIT"
 }

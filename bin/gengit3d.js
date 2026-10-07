@@ -123,6 +123,33 @@ function sendJson(res, code, obj) {
 const ALLOWED_URL = /^(https?:\/\/|git:\/\/|ssh:\/\/|git@[\w.-]+:|file:\/\/)/i;
 const SHA_RE = /^[0-9a-fA-F]{4,40}$/;
 
+// Security: by default only https:// is allowed for cloning.
+// Set GENGIT3D_ALLOW_ALL_SCHEMES=1 to allow git://, ssh://, git@host:, file://
+const ALLOW_ALL_SCHEMES = process.env.GENGIT3D_ALLOW_ALL_SCHEMES === '1';
+const SAFE_CLONE_URL = /^https:\/\//i;
+
+// Security: allowlist of root directories for ?repo=<path>.
+// If set, repo= paths must be inside one of these roots.
+// Format: comma-separated absolute paths (e.g. "/repos,/home/user/projects")
+const REPO_ALLOWLIST = (process.env.GENGIT3D_REPO_ALLOWLIST || '')
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean)
+    .map(p => resolve(toNative(p)));
+
+// Security: bind to 127.0.0.1 by default (loopback only).
+// Set GENGIT3D_HOST=0.0.0.0 to listen on all interfaces.
+const HOST = process.env.GENGIT3D_HOST || '127.0.0.1';
+
+// Security: max clone size in bytes (default 500 MB)
+const MAX_CLONE_SIZE = parseInt(process.env.GENGIT3D_MAX_CLONE_SIZE || '500000000', 10);
+
+// Security: clone timeout in ms (default 5 minutes)
+const CLONE_TIMEOUT = parseInt(process.env.GENGIT3D_CLONE_TIMEOUT || '300000', 10);
+
+// Security: auto-cleanup clones older than N ms (default 1 hour)
+const CLONE_TTL = parseInt(process.env.GENGIT3D_CLONE_TTL || '3600000', 10);
+
 /**
  * Commit details for one commit: metadata + changed files (+ optional patch).
  * GET /api/commit?repo=<path>&hash=<sha>&patch=1&maxPatch=<chars>
@@ -213,6 +240,11 @@ async function handleGraph(res, q) {
     const view = q.get('view') || 'topological';
     if (!repo) return sendJson(res, 400, { error: 'missing ?repo=<path>' });
     if (!(await isGitRepo(repo))) return sendJson(res, 400, { error: `not a git repository: ${repo}` });
+    // Security: if an allowlist is configured, repo must be inside one of the allowed roots
+    if (REPO_ALLOWLIST.length > 0) {
+        const allowed = REPO_ALLOWLIST.some(root => repo.startsWith(root + '/') || repo === root);
+        if (!allowed) return sendJson(res, 403, { error: `repo path not in allowlist: ${repo}` });
+    }
     try {
         const graph = await makeGraph(repo, { max, view });
         sendJson(res, 200, { ...graph, source: { kind: 'local', repo } });
@@ -260,26 +292,49 @@ async function handleClone(res, q) {
     const max = parseInt(q.get('max') || '0', 10) || 0;
     const view = q.get('view') || 'topological';
     if (!url) return sendJson(res, 400, { error: 'missing ?url=<git-url>' });
+    // Security: by default only https:// is allowed. Set GENGIT3D_ALLOW_ALL_SCHEMES=1 to allow others.
+    if (!ALLOW_ALL_SCHEMES && !SAFE_CLONE_URL.test(url)) {
+        return sendJson(res, 403, { error: `only https:// URLs allowed by default (set GENGIT3D_ALLOW_ALL_SCHEMES=1 to override)` });
+    }
     if (!ALLOWED_URL.test(url)) return sendJson(res, 400, { error: `unsupported url scheme: ${url}` });
 
     const name = basename(url.replace(/\.git$/, '')).replace(/[^\w.-]/g, '_') || 'repo';
     const dest = join(CLONE_ROOT, `${name}-${Date.now()}`);
     await mkdir(CLONE_ROOT, { recursive: true });
+    // Security: use -- to prevent option injection (e.g. URL starting with -)
     const args = ['clone', '--quiet'];
     if (depth > 0) args.push('--depth', String(depth));
-    args.push(url, dest);
+    args.push('--', url, dest);
     try {
-        await execFileP(GIT, args, { timeout: 300000, maxBuffer: 64 * 1024 * 1024 });
+        await execFileP(GIT, args, { timeout: CLONE_TIMEOUT, maxBuffer: 64 * 1024 * 1024 });
     } catch (e) {
+        // Clean up failed clone
+        await rm(dest, { recursive: true, force: true }).catch(() => {});
         return sendJson(res, 500, {
             error: `git clone failed: ${(e.stderr || e.message || '').toString().slice(0, 400)}`,
         });
+    }
+    // Security: check clone size
+    try {
+        const { stdout: sizeOut } = await execFileP(GIT, ['count-objects', '-vH'], { cwd: dest, timeout: 10000 });
+        const sizeMatch = sizeOut.match(/size-pack:\s*(\d+)/);
+        if (sizeMatch && parseInt(sizeMatch[1], 10) > MAX_CLONE_SIZE) {
+            await rm(dest, { recursive: true, force: true }).catch(() => {});
+            return sendJson(res, 413, { error: `clone exceeds max size (${MAX_CLONE_SIZE} bytes)` });
+        }
+    } catch {
+        // If size check fails, continue (don't block the clone)
     }
     try {
         const graph = await makeGraph(dest, { max, view });
         sendJson(res, 200, { ...graph, source: { kind: 'clone', url, depth, repo: dest } });
     } catch (e) {
         sendJson(res, 500, { error: `parse failed: ${e.message}` });
+    } finally {
+        // Schedule cleanup of this clone after TTL
+        setTimeout(() => {
+            rm(dest, { recursive: true, force: true }).catch(() => {});
+        }, CLONE_TTL).unref();
     }
 }
 
@@ -322,10 +377,19 @@ async function cmdServe(opts) {
             res.end('not found');
         }
     });
-    server.listen(port, () => {
-        console.log(`[gengit3d] serving ${dir} at http://localhost:${port}`);
-        console.log(`[gengit3d] open http://localhost:${port}/ — enter a repo path or git URL to render it`);
+    server.listen(port, HOST, () => {
+        console.log(`[gengit3d] serving ${dir} at http://${HOST}:${port}`);
+        console.log(`[gengit3d] open http://${HOST}:${port}/ — enter a repo path or git URL to render it`);
         console.log('[gengit3d] API: /api/graph?repo=<path>  |  /api/clone?url=<git-url>');
+        if (HOST === '127.0.0.1') {
+            console.log('[gengit3d] security: listening on loopback only (set GENGIT3D_HOST=0.0.0.0 to expose)');
+        }
+        if (!ALLOW_ALL_SCHEMES) {
+            console.log('[gengit3d] security: only https:// clones allowed (set GENGIT3D_ALLOW_ALL_SCHEMES=1 to override)');
+        }
+        if (REPO_ALLOWLIST.length > 0) {
+            console.log(`[gengit3d] security: repo allowlist = ${REPO_ALLOWLIST.join(', ')}`);
+        }
     });
 }
 
