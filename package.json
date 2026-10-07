@@ -1,22 +1,122 @@
 {
   "name": "gengit3d",
+  "displayName": "GenGit3D",
+  "description": "3D git commit graph visualizer — parse git log into an interactive 3D scene (like GitGraph, but volumetric).",
   "version": "0.1.0",
-  "description": "3D git commit graph visualizer (parse git log -> three.js scene). Standalone, decoupled from GLSL_DISCORD bot.",
-  "type": "module",
-  "bin": {
-    "gengit3d": "./bin/gengit3d.js"
+  "publisher": "planeszwalker",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/PlanesZwalker/gengit3d"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Visualization",
+    "SCM",
+    "Other"
+  ],
+  "keywords": [
+    "git",
+    "graph",
+    "3d",
+    "visualization",
+    "commit",
+    "history"
+  ],
+  "activationEvents": [
+    "onCommand:gengit3d.open",
+    "onCommand:gengit3d.openFile"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "gengit3d.open",
+        "title": "GenGit3D: Open 3D Graph",
+        "icon": "$(graph)"
+      },
+      {
+        "command": "gengit3d.openFile",
+        "title": "GenGit3D: Open 3D Graph for Current File",
+        "icon": "$(graph)"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "gengit3d.openFile",
+          "group": "navigation",
+          "when": "resourceScheme == file"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "gengit3d.open",
+          "group": "2_workspace@5",
+          "when": "explorerResourceIsFolder"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "GenGit3D",
+      "properties": {
+        "gengit3d.defaultView": {
+          "type": "string",
+          "enum": [
+            "topological",
+            "chronological",
+            "author",
+            "radial",
+            "queue",
+            "real-branches"
+          ],
+          "default": "topological",
+          "description": "Default graph layout view"
+        },
+        "gengit3d.defaultTheme": {
+          "type": "string",
+          "enum": [
+            "midnight",
+            "slate",
+            "neon",
+            "daylight",
+            "paper",
+            "solarized"
+          ],
+          "default": "daylight",
+          "description": "Default colour theme"
+        },
+        "gengit3d.maxCommits": {
+          "type": "number",
+          "default": 5000,
+          "description": "Maximum number of commits to parse (0 = unlimited)"
+        },
+        "gengit3d.autoRotate": {
+          "type": "boolean",
+          "default": false,
+          "description": "Auto-rotate the 3D scene"
+        }
+      }
+    }
   },
   "scripts": {
-    "parse": "node bin/gengit3d.js parse",
-    "serve": "node bin/gengit3d.js serve",
-    "start": "node bin/gengit3d.js",
-    "test": "vitest run"
+    "build:ext": "esbuild src/extension.ts --bundle --platform=node --external:vscode --outfile=dist/extension.js --format=cjs",
+    "build:webview": "esbuild src/webview.ts --bundle --platform=browser --outfile=dist/webview.js --format=iife --minify",
+    "build": "npm run build:ext && npm run build:webview",
+    "watch:ext": "esbuild src/extension.ts --bundle --platform=node --external:vscode --outfile=dist/extension.js --format=cjs --watch",
+    "watch:webview": "esbuild src/webview.ts --bundle --platform=browser --outfile=dist/webview.js --format=iife --watch",
+    "package": "vsce package",
+    "publish": "vsce publish"
   },
   "dependencies": {
     "three": "^0.160.0"
   },
   "devDependencies": {
-    "vitest": "^1.2.0"
-  },
-  "license": "MIT"
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "esbuild": "^0.20.0",
+    "vsce": "^2.15.0"
+  }
 }

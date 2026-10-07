@@ -10,8 +10,44 @@ Built from scratch — no dependency on the separate GenGit (LLM-token DAG) proj
 
 ## Install
 
+### Standalone (CLI + serveur web)
+
 ```bash
 npm install        # pulls three.js
+```
+
+### VS Code Extension
+
+```bash
+# 1. Installer les dépendances et builder l'extension
+npm install
+npm run build
+
+# 2. Packager en .vsix
+npx vsce package
+
+# 3. Installer dans VS Code
+code --install-extension gengit3d-0.1.0.vsix --force
+```
+
+Ou en mode debug : ouvrir le dossier dans VS Code et appuyer sur `F5` (Extension Development Host).
+
+#### Commandes VS Code
+
+| Commande | Rôle |
+|----------|------|
+| `GenGit3D: Open 3D Graph` | Ouvre le graphe 3D du repo courant |
+| `GenGit3D: Open 3D Graph for Current File` | Ouvre le graphe 3D depuis le fichier actif |
+
+#### Configuration VS Code
+
+```jsonc
+{
+  "gengit3d.defaultView": "topological",    // vue par défaut
+  "gengit3d.defaultTheme": "daylight",      // thème par défaut
+  "gengit3d.maxCommits": 5000,              // limite de commits
+  "gengit3d.autoRotate": false             // rotation auto
+}
 ```
 
 ## Usage

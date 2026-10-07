@@ -14,3 +14,7 @@ gengit3d-clones/
 # OS / editor
 .DS_Store
 Thumbs.db
+
+# Build artifacts
+dist/
+*.vsix
