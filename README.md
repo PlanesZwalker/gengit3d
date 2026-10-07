@@ -43,6 +43,10 @@ Ou en mode debug : ouvrir le dossier dans VS Code et appuyer sur `F5` (Extension
 | `GenGit3D: Open 3D Graph` | Ouvre le graphe 3D du repo courant |
 | `GenGit3D: Open 3D Graph for Current File` | Ouvre le graphe 3D depuis le fichier actif |
 
+#### Barre d'état
+
+Un bouton **GenGit3D** apparaît dans la barre d'état en bas à gauche de VS Code (comme GitGraph). Cliquez dessus pour ouvrir le graphe 3D du repo courant.
+
 #### Configuration VS Code
 
 ```jsonc

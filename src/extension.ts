@@ -212,6 +212,17 @@ function getWebviewContent(
 export function activate(context: vscode.ExtensionContext) {
     const cfg = getConfig();
 
+    // ── Status bar button (comme GitGraph) ────────────────────────────────────
+    const statusBarItem = vscode.window.createStatusBarItem(
+        vscode.StatusBarAlignment.Left,
+        100  // priorité (à gauche)
+    );
+    statusBarItem.text = '$(graph) GenGit3D';
+    statusBarItem.tooltip = 'Open GenGit3D — 3D git commit graph';
+    statusBarItem.command = 'gengit3d.open';
+    statusBarItem.show();
+    context.subscriptions.push(statusBarItem);
+
     // Commande : ouvrir le graphe 3D (workspace courant)
     const openCmd = vscode.commands.registerCommand('gengit3d.open', async (uri?: vscode.Uri) => {
         const targetUri = uri || vscode.window.activeTextEditor?.document.uri;
