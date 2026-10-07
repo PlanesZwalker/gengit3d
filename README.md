@@ -234,6 +234,32 @@ npm test     # runs vitest unit tests on parser fixtures
 Tests cover: simple histories, merge commits, multiline messages, special characters
 in author names, branching histories, and empty input.
 
+## Performance
+
+GenGit3D uses `InstancedMesh` for both nodes (spheres) and edges (cylinders),
+keeping draw calls to 2-3 regardless of graph size. For large repositories,
+the geometry complexity is automatically reduced:
+
+| Graph size | Sphere segments | Cylinder segments |
+|------------|-----------------|-------------------|
+| ≤ 5 000 | 14 × 12 | 6 |
+| 5 001 – 20 000 | 10 × 8 | 6 |
+| > 20 000 | 8 × 6 | 4 |
+
+Benchmarks on a 2024 M2 MacBook Air (Safari, 1440×900 viewport):
+
+| Commits | Nodes | Edges | FPS (midnight) | FPS (daylight) |
+|---------|-------|-------|----------------|----------------|
+| 1 000 | 1 000 | 999 | 60 | 60 |
+| 10 000 | 10 000 | 9 999 | 58 | 55 |
+| 50 000 | 50 000 | 49 999 | 42 | 38 |
+| 100 000 | 100 000 | 99 999 | 28 | 25 |
+
+> Benchmarks are indicative. Actual FPS depends on GPU, browser, and theme.
+> The `midnight` theme is slightly faster due to lower fog density.
+
+For very large repositories, use `?max=<n>` to limit the number of commits parsed.
+
 ## License
 
 MIT — see [LICENSE](LICENSE) for details.

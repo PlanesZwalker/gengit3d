@@ -132,7 +132,7 @@ export function renderGraph(container, graph, opts) {
     const mid = new THREE.Vector3();
     const q = new THREE.Quaternion();
     const m = new THREE.Matrix4();
-    const edgeGeo = whiteAttr(new THREE.CylinderGeometry(0.5, 0.5, 1, 6, 1, true));
+    const edgeGeo = whiteAttr(new THREE.CylinderGeometry(0.5, 0.5, 1, graph.nodes.length > 20000 ? 4 : 6, 1, true));
     const edgeMatVisible = new THREE.MeshStandardMaterial({
         roughness: 0.75,
         metalness: 0.2,
@@ -205,7 +205,10 @@ export function renderGraph(container, graph, opts) {
 
     // ---- nodes as instanced spheres (one draw call, real volume) ----
     // Two meshes: visible (opacity 1.0) and hidden (opacity 0.1) for filtering
-    const nodeGeo = whiteAttr(new THREE.SphereGeometry(1, 14, 12));
+    // LOD: reduce sphere segments for large graphs to keep FPS acceptable
+    const nodeSegments = graph.nodes.length > 20000 ? 8 : graph.nodes.length > 5000 ? 10 : 14;
+    const nodeRings = graph.nodes.length > 20000 ? 6 : graph.nodes.length > 5000 ? 8 : 12;
+    const nodeGeo = whiteAttr(new THREE.SphereGeometry(1, nodeSegments, nodeRings));
     const nodeMatVisible = new THREE.MeshStandardMaterial({
         roughness: 0.32,
         metalness: 0.25,
