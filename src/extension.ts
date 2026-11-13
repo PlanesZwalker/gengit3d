@@ -237,6 +237,8 @@ function getWebviewContent(
     #gengit3d-status.busy { color: var(--busy); }
     #gengit3d-status.err { color: var(--err); }
     #gengit3d-help { position: fixed; bottom: 10px; left: 10px; font: 11px monospace; color: var(--muted); z-index: 5; }
+    #gengit3d-key-hud { position: fixed; bottom: 30px; left: 10px; font: 11px monospace; color: var(--text); z-index: 9; background: var(--overlay); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; line-height: 1.5; max-width: 460px; }
+    #gengit3d-key-hud b { color: var(--accent); }
     #gengit3d-loading { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; font: 16px monospace; color: var(--muted); z-index: 4; text-align: center; padding: 0 20px; }
     #gengit3d-scrub { position: fixed; bottom: 10px; left: 50%; transform: translateX(-50%); z-index: 6; display: flex; gap: 8px; align-items: center; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 6px 12px; box-shadow: 0 6px 22px #0006; backdrop-filter: blur(10px); }
     #gengit3d-scrub button { height: 24px; background: var(--input); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 0 10px; font: 12px monospace; cursor: pointer; }
@@ -361,7 +363,10 @@ function getWebviewContent(
       <label title="rotate the view automatically"><input id="gengit3d-rotate" type="checkbox" /> rotate</label>
       <label title="always-on labels for merges and tags (nearest ~24)"><input id="gengit3d-labels" type="checkbox" /> labels</label>
       <label title="last commit of every branch — branch name + hash + subject"><input id="gengit3d-tips" type="checkbox" checked /> tips</label>
+      <label title="unroll the graph into a 2D plane — lanes side by side, like a classic git graph"><input id="gengit3d-flat" type="checkbox" /> flat</label>
+      <label title="far zoom keeps only merges, branch tips and tags — the story beats"><input id="gengit3d-summary" type="checkbox" checked /> sum</label>
       <button id="gengit3d-fit" class="icon-btn" title="frame the visible commits">⌂</button>
+      <button id="gengit3d-key" class="icon-btn" title="legend — node shapes and reading aids">?</button>
     </div>
     <div class="sep"></div>
     <div class="group">
@@ -377,7 +382,14 @@ function getWebviewContent(
   <div id="gengit3d-now" style="display:none"></div>
   <div id="gengit3d-subtitle"></div>
   <div id="gengit3d-stats">loading…</div>
-  <div id="gengit3d-help">drag: rotate · scroll: zoom · right-drag: pan · click a commit: details + zoom · click a branch name: solo · shapes: ● commit ◆ merge ▲ root ■ uncommitted ◇ ref tip</div>
+  <div id="gengit3d-help">drag: rotate · scroll: zoom · right-drag: pan · click a commit: details + zoom · click a branch name: solo · hover: commit path</div>
+  <div id="gengit3d-key-hud" style="display:none">
+    <div class="row"><b>shapes</b> ● commit · ◆ merge · ▲ root · ■ uncommitted · ▶ stash · ◇ ref tip</div>
+    <div class="row"><b>tips</b> ⎇ card = last commit of each branch (name · hash · subject)</div>
+    <div class="row"><b>hover</b> brightens the commit's path · <b>click</b> = details + related files</div>
+    <div class="row"><b>zoom</b> far = summary (merges / tips / tags) · close = full detail · <b>flat</b> = 2D lanes</div>
+    <div class="row"><b>aids</b> lane guides · date rings · bottom-right minimap = where you are</div>
+  </div>
   <div id="gengit3d-loading">loading graph…</div>
 
   <div id="gengit3d-scrub">

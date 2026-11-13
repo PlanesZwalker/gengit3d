@@ -154,6 +154,27 @@ export function renderGraph(container, graph, opts) {
     scene.add(rim);
 
     const nodeById = new Map(graph.nodes.map(n => [n.id, n]));
+    // Liens enfants (parent → enfants) pour le highlight de chemin au
+    // survol : ancêtres+descendants gardent leurs couleurs, le reste
+    // s'éteint — on lit le "fil" d'un commit dans le nuage.
+    const childOf = new Map();
+    for (const e of graph.edges) {
+        let l = childOf.get(e.target);
+        if (!l) childOf.set(e.target, (l = []));
+        l.push(e.source);
+    }
+    const PATH_CAP = 600; // borne le BFS — un nœud central ne repeint pas tout
+    const pathAround = id => {
+        const out = new Set([id]);
+        const q = [id];
+        while (q.length && out.size < PATH_CAP) {
+            const cur = q.shift();
+            const n = nodeById.get(cur);
+            for (const p of n?.parents ?? []) if (!out.has(p)) { out.add(p); q.push(p); }
+            for (const c of childOf.get(cur) ?? []) if (!out.has(c)) { out.add(c); q.push(c); }
+        }
+        return out;
+    };
     const colorOf = branchId => branchColorMap.get(branchId) ?? 0x4f9dff;
     // Synthetic tip nodes (stash/empty-branch) get a distinct color
     const TIP_COLORS = { stash: 0xff8c42, 'empty-branch': 0x8b93a7, uncommitted: 0xf2c14e };
@@ -177,11 +198,23 @@ export function renderGraph(container, graph, opts) {
         colorCache.set(branchId, c);
         return c;
     };
-    // Node-level color override for synthetic tips
+    // Node-level color override for synthetic tips. tintOf() returns a
+    // CACHED shared color — clone before dimming so the path highlight
+    // never mutates the palette.
+    const bgFade = new THREE.Color(theme.background);
+    let pathSet = null; // ids du chemin survolé — le reste s'éteint
     const nodeColorOf = n => {
         const tipC = tipColorOf(n);
-        if (tipC !== null) return new THREE.Color(tipC);
-        return tintOf(n.branch);
+        const c = tipC !== null ? new THREE.Color(tipC) : tintOf(n.branch).clone();
+        if (pathSet && !pathSet.has(n.id)) c.lerp(bgFade, 0.8);
+        return c;
+    };
+    // Teinte d'arête = couleur de la branche du commit source, éteinte si
+    // l'arête ne fait pas partie du chemin survolé.
+    const edgeColorOf = s => {
+        const c = tintOf(s.branch).clone();
+        if (pathSet && !pathSet.has(s.id)) c.lerp(bgFade, 0.8);
+        return c;
     };
     // white per-vertex colour so USE_COLOR * instanceColor tints correctly
     // (without it three.js reads a default (0,0,0) attribute -> black meshes)
@@ -227,6 +260,17 @@ export function renderGraph(container, graph, opts) {
     edgesHidden.instanceMatrix.setUsage(THREE.StaticDrawUsage);
     edgesVisible.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(nEdges * 3), 3);
     edgesHidden.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(nEdges * 3), 3);
+    // Arêtes longues (traversées de merge qui "barrent" la vue) : ×0.55 de
+    // largeur — elles restent tracées sans écraser les commits voisins.
+    const _edgeLens = [];
+    for (const e of solidEdges) {
+        const s = nodeById.get(e.source);
+        const t = nodeById.get(e.target);
+        if (s && t) _edgeLens.push(Math.hypot(s.x - t.x, s.y - t.y, s.z - t.z));
+    }
+    _edgeLens.sort((x, y) => x - y);
+    const LONG_EDGE = (_edgeLens[_edgeLens.length >> 1] || 1) * 6;
+    const edgeWOf = len => (len > LONG_EDGE ? 0.55 : 1);
     let ei = 0;
     for (const e of solidEdges) {
         if (ei >= nEdges) break;
@@ -239,7 +283,8 @@ export function renderGraph(container, graph, opts) {
         const len = dir.length() || 0.001;
         mid.addVectors(a, b).multiplyScalar(0.5);
         q.setFromUnitVectors(up, dir.clone().normalize());
-        m.compose(mid, q, new THREE.Vector3(1, len, 1));
+        const w = edgeWOf(len);
+        m.compose(mid, q, new THREE.Vector3(w, len, w));
         edgesVisible.setMatrixAt(ei, m);
         edgesVisible.setColorAt(ei, tintOf(s.branch));
         ei++;
@@ -260,24 +305,31 @@ export function renderGraph(container, graph, opts) {
         transparent: true,
         opacity: 0.7,
     });
+    let dashSeg = null;
     if (dashedEdges.length > 0) {
-        const positions = new Float32Array(dashedEdges.length * 6);
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(dashedEdges.length * 6), 3));
+        dashSeg = new THREE.LineSegments(geo, dashedMat);
+        dashedGroup.add(dashSeg);
+    }
+    // Réécrit les positions des arêtes dashed depuis les coordonnées
+    // COURANTES des nœuds — utilisé par le mode "flat" (déroulage).
+    function rebuildDashed() {
+        if (!dashSeg) return;
+        const attr = dashSeg.geometry.getAttribute('position');
         let pi = 0;
         for (const e of dashedEdges) {
             const s = nodeById.get(e.source);
             const t = nodeById.get(e.target);
             if (!s || !t) continue;
-            positions[pi++] = s.x; positions[pi++] = s.y; positions[pi++] = s.z;
-            positions[pi++] = t.x; positions[pi++] = t.y; positions[pi++] = t.z;
+            attr.setXYZ(pi++, s.x, s.y, s.z);
+            attr.setXYZ(pi++, t.x, t.y, t.z);
         }
-        if (pi > 0) {
-            const geo = new THREE.BufferGeometry();
-            geo.setAttribute('position', new THREE.BufferAttribute(positions.subarray(0, pi), 3));
-            const seg = new THREE.LineSegments(geo, dashedMat);
-            seg.computeLineDistances();
-            dashedGroup.add(seg);
-        }
+        attr.needsUpdate = true;
+        dashSeg.geometry.setDrawRange(0, pi);
+        dashSeg.computeLineDistances();
     }
+    rebuildDashed();
     edgeGroup.add(dashedGroup);
     scene.add(edgeGroup);
 
@@ -342,6 +394,9 @@ export function renderGraph(container, graph, opts) {
         slotToNode[i] = i;
         nodeToSlot[i] = i;
         n._r = r;
+        n.bx = n.x; // coordonnées de base — le mode "flat" les déforme
+        n.by = n.y;
+        n.bz = n.z;
     });
     nodesVisible.count = graph.nodes.length;
     nodesHidden.count = 0;
@@ -349,6 +404,20 @@ export function renderGraph(container, graph, opts) {
     nodesVisible.instanceColor.needsUpdate = true;
     scene.add(nodesVisible);
     scene.add(nodesHidden);
+
+    // Store base matrices for filtering (avoid re-reading from InstancedMesh).
+    // Captured HERE, before animate() starts — the semantic-zoom check in
+    // the loop can trigger a recompact on the very first frame.
+    const baseNodeMatrices = new Float32Array(graph.nodes.length * 16);
+    const baseEdgeMatrices = new Float32Array(nEdges * 16);
+    for (let i = 0; i < graph.nodes.length; i++) {
+        nodesVisible.getMatrixAt(i, m);
+        m.toArray(baseNodeMatrices, i * 16);
+    }
+    for (let i = 0; i < ei; i++) {
+        edgesVisible.getMatrixAt(i, m);
+        m.toArray(baseEdgeMatrices, i * 16);
+    }
 
     // ---- selection marker (halo around the clicked commit) ----
     const selMat = new THREE.MeshBasicMaterial({
@@ -448,8 +517,57 @@ export function renderGraph(container, graph, opts) {
         ticks.count = ti;
         ticks.instanceMatrix.needsUpdate = true;
         axisGroup.add(ticks);
+        // Strates de dates : un anneau tenu à chaque tick, dans le plan
+        // orthogonal à l'axe du temps — la position→date se lit à travers
+        // le nuage, pas seulement au pied de l'axe.
+        const ringR = maxDim * 0.55;
+        for (let k = 0; k < TICKS; k++) {
+            const v = vMin + (vMax - vMin) * (k / (TICKS - 1));
+            const pts = new THREE.EllipseCurve(0, 0, ringR, ringR)
+                .getPoints(72)
+                .map(p => (horizontal ? new THREE.Vector3(v, p.x, p.y) : new THREE.Vector3(p.x, v, p.y)));
+            axisGroup.add(
+                new THREE.LineLoop(
+                    new THREE.BufferGeometry().setFromPoints(pts),
+                    new THREE.LineBasicMaterial({ color: theme.axis, transparent: true, opacity: 0.06 })
+                )
+            );
+        }
         scene.add(axisGroup);
     }
+
+    // ---- guides de lanes : une verticale ténue par branche majeure, à
+    // l'angle/rayon moyens de ses nœuds — repère où "vit" chaque branche
+    // dans le cylindre. Vues non cylindriques (radius ≈ 0) : rien à tracer.
+    const laneGroup = new THREE.Group();
+    {
+        const acc = new Map();
+        for (const n of graph.nodes) {
+            if ((n.radius ?? 0) < 1) continue; // vue plate : pas de lane
+            const e = acc.get(n.branch) || { a: 0, r: 0, c: 0 };
+            e.a += n.angle;
+            e.r += n.radius;
+            e.c++;
+            acc.set(n.branch, e);
+        }
+        for (const [bid, e] of acc) {
+            if (!isMajor(bid)) continue;
+            const rad = e.r / e.c;
+            const px = Math.cos(e.a / e.c) * rad;
+            const pz = Math.sin(e.a / e.c) * rad;
+            const g = new THREE.BufferGeometry().setFromPoints([
+                new THREE.Vector3(px, vMin, pz),
+                new THREE.Vector3(px, vMax, pz),
+            ]);
+            laneGroup.add(
+                new THREE.Line(
+                    g,
+                    new THREE.LineBasicMaterial({ color: colorOf(bid), transparent: true, opacity: 0.12 })
+                )
+            );
+        }
+    }
+    scene.add(laneGroup);
 
     // raycaster for hover tooltips + click selection
     const raycaster = new THREE.Raycaster();
@@ -482,6 +600,22 @@ export function renderGraph(container, graph, opts) {
         return null;
     }
 
+    // Highlight du chemin au survol — debounce ~180 ms : le re-teint de
+    // tout le graphe est trop lourd pour suivre la souris à 60 Hz.
+    let pathTimer = null;
+    let pathFor = undefined;
+    const schedulePath = n => {
+        if (n === pathFor) return;
+        pathFor = n;
+        if (pathTimer) clearTimeout(pathTimer);
+        pathTimer = setTimeout(() => {
+            const next = n ? pathAround(n.id) : null;
+            if (next !== pathSet) {
+                pathSet = next;
+                retint();
+            }
+        }, 180);
+    };
     function onMove(ev) {
         const hit = pick(ev);
         if (hit) {
@@ -494,11 +628,13 @@ export function renderGraph(container, graph, opts) {
             hoverGlow.userData.baseS = hit.node._r * 1.9 + 1;
             hoverGlow.scale.setScalar(hoverGlow.userData.baseS);
             hoverGlow.visible = true;
+            schedulePath(hit.node);
             return;
         }
         tooltip.style.display = 'none';
         document.body.style.cursor = 'default';
         hoverGlow.visible = false;
+        schedulePath(null);
     }
     renderer.domElement.addEventListener('mousemove', onMove);
 
@@ -539,10 +675,100 @@ export function renderGraph(container, graph, opts) {
         onClick(ev);
     });
 
+    // ---- Placement d'étiquettes mutualisé : tips de branches + merges/tags
+    // soumettent des candidats priorisés ; le placer trie (priorité puis
+    // profondeur) et résout les collisions en décalant vers le bas.
+    const tipProj = new THREE.Vector3();
+    const _placed = [];
+    const projectXY = (n, rect) => {
+        tipProj.set(n.x, n.y, n.z).project(camera);
+        if (tipProj.z > 1) return null;
+        return {
+            x: rect.left + (tipProj.x * 0.5 + 0.5) * rect.width,
+            y: rect.top + (-tipProj.y * 0.5 + 0.5) * rect.height,
+            z: tipProj.z,
+        };
+    };
+    function placeLabels(cands, rect) {
+        _placed.length = 0;
+        cands.sort((pa, pb) => pa.pri - pb.pri || pa.z - pb.z);
+        const bottom = rect.top + rect.height - 4;
+        for (const c of cands) {
+            let cy = c.y;
+            let ok = false;
+            for (let k = 0; k < 8 && cy + c.h <= bottom; k++, cy += c.h + 3) {
+                let hit = false;
+                for (const r of _placed) {
+                    if (c.x < r.x + r.w && c.x + c.w > r.x && cy < r.y + r.h && cy + c.h > r.y) {
+                        hit = true;
+                        break;
+                    }
+                }
+                if (!hit) {
+                    _placed.push({ x: c.x, y: cy, w: c.w, h: c.h });
+                    c.fill?.();
+                    c.el.style.left = c.x + 'px';
+                    c.el.style.top = cy + 'px';
+                    c.el.style.display = 'block';
+                    ok = true;
+                    break;
+                }
+            }
+            if (!ok) c.el.style.display = 'none';
+        }
+    }
+
+    // ---- permanent merge/tag labels — the repo's "story beats". Quota
+    // adapts to viewport height so a far zoom doesn't wall of text.
+    const NL_MAX = 24;
+    let labelsOn = false;
+    const nlDivs = [];
+    for (let i = 0; i < NL_MAX; i++) {
+        const el = document.createElement('div');
+        el.style.cssText =
+            'position:fixed;pointer-events:none;background:var(--overlay);color:var(--text);' +
+            'padding:1px 6px;border-radius:4px;font:10px monospace;z-index:8;display:none;' +
+            'white-space:nowrap;border:1px solid var(--border);opacity:.92;';
+        document.body.appendChild(el);
+        nlDivs.push(el);
+    }
+    const labeled = graph.nodes.filter(n => (n.parents?.length ?? 0) >= 2 || (n.tags && n.tags.length));
+    function collectNodeLabels(rect, out) {
+        let used = 0;
+        if (labelsOn) {
+            const quota = Math.min(NL_MAX, Math.max(4, Math.floor(rect.height / 26)));
+            const cands = [];
+            for (const n of labeled) {
+                if (lastNodeFilter && !lastNodeFilter(n)) continue;
+                const p = projectXY(n, rect);
+                if (!p) continue;
+                if (p.x < rect.left - 40 || p.x > rect.left + rect.width + 40 ||
+                    p.y < rect.top - 20 || p.y > rect.top + rect.height + 20) continue;
+                cands.push({ n, x: p.x, y: p.y, z: p.z });
+            }
+            cands.sort((pa, pb) => pa.z - pb.z);
+            used = Math.min(quota, cands.length);
+            for (let i = 0; i < used; i++) {
+                const c = cands[i];
+                const el = nlDivs[i];
+                out.push({
+                    pri: 2, z: c.z, x: c.x + 10, y: c.y - 22, w: 96, h: 18, el,
+                    fill: () => {
+                        const txt = c.n.tags?.length ? `⚐ ${c.n.tags[0]}` : `◆ ${c.n.short}`;
+                        if (el.textContent !== txt) el.textContent = txt;
+                    },
+                });
+            }
+        }
+        for (let i = used; i < NL_MAX; i++) {
+            if (nlDivs[i].style.display !== 'none') nlDivs[i].style.display = 'none';
+        }
+    }
+
     // ---- branch tip labels: the LAST commit of every branch, tagged with
     // name + hash + subject — the graph's landmarks. On by default (toolbar
-    // "tips" checkbox), capped at the ~32 nearest to the camera. Branches
-    // sharing the same tip commit stack vertically to stay readable.
+    // "tips" checkbox); quota adapts to viewport height, collisions are
+    // resolved by the shared placer (vertical stacking).
     const TL_MAX = 32;
     let tipLabelsOn = true;
     const tipEntries = [];
@@ -567,48 +793,51 @@ export function renderGraph(container, graph, opts) {
         document.body.appendChild(el);
         tlDivs.push({ el, nm, sb, text: '' });
     }
-    const tipProj = new THREE.Vector3();
-    function updateTipLabels() {
-        if (!tipLabelsOn) {
-            for (const d of tlDivs) if (d.el.style.display !== 'none') d.el.style.display = 'none';
-            return;
+    function collectTipLabels(rect, out) {
+        let used = 0;
+        if (tipLabelsOn) {
+            const quota = Math.min(TL_MAX, Math.max(6, Math.floor(rect.height / 28)));
+            const cands = [];
+            for (const e of tipEntries) {
+                const n = e.n;
+                if (lastNodeFilter && !lastNodeFilter(n)) continue; // filtered out (ghosted)
+                const p = projectXY(n, rect);
+                if (!p) continue; // behind the camera
+                if (p.x < rect.left - 60 || p.x > rect.left + rect.width + 60 ||
+                    p.y < rect.top - 30 || p.y > rect.top + rect.height + 30) continue;
+                cands.push({ e, x: p.x, y: p.y, z: p.z });
+            }
+            cands.sort((pa, pb) => pa.z - pb.z);
+            used = Math.min(quota, tlDivs.length, cands.length);
+            for (let i = 0; i < used; i++) {
+                const c = cands[i];
+                const d = tlDivs[i];
+                out.push({
+                    pri: 1, z: c.z, x: c.x + 12, y: c.y - 14, w: 190, h: 32, el: d.el,
+                    fill: () => {
+                        const txt = `⎇ ${c.e.br.name}|${c.e.n.short} · ${c.e.n.subject}`;
+                        if (d.text !== txt) {
+                            d.text = txt;
+                            const cut = txt.indexOf('|');
+                            d.nm.textContent = txt.slice(0, cut);
+                            d.sb.textContent = txt.slice(cut + 1);
+                            d.nm.style.color = c.e.css;
+                            d.el.style.borderLeftColor = c.e.css;
+                        }
+                    },
+                });
+            }
         }
+        for (let i = used; i < tlDivs.length; i++) {
+            if (tlDivs[i].el.style.display !== 'none') tlDivs[i].el.style.display = 'none';
+        }
+    }
+    function updateLabels() {
         const rect = renderer.domElement.getBoundingClientRect();
         const cands = [];
-        for (const e of tipEntries) {
-            const n = e.n;
-            if (lastNodeFilter && !lastNodeFilter(n)) continue; // filtered out (ghosted)
-            tipProj.set(n.x, n.y, n.z).project(camera);
-            if (tipProj.z > 1) continue; // behind the camera
-            const x = (tipProj.x * 0.5 + 0.5) * rect.width;
-            const y = (-tipProj.y * 0.5 + 0.5) * rect.height;
-            if (x < -60 || x > rect.width + 60 || y < -30 || y > rect.height + 30) continue;
-            cands.push({ e, x, y, z: tipProj.z });
-        }
-        cands.sort((pa, pb) => pa.z - pb.z);
-        const stacked = new Map();
-        for (let i = 0; i < tlDivs.length; i++) {
-            const d = tlDivs[i];
-            const c = cands[i];
-            if (!c) {
-                if (d.el.style.display !== 'none') d.el.style.display = 'none';
-                continue;
-            }
-            const row = stacked.get(c.e.n.id) || 0;
-            stacked.set(c.e.n.id, row + 1);
-            const txt = `⎇ ${c.e.br.name}|${c.e.n.short} · ${c.e.n.subject}`;
-            if (d.text !== txt) {
-                d.text = txt;
-                const cut = txt.indexOf('|');
-                d.nm.textContent = txt.slice(0, cut);
-                d.sb.textContent = txt.slice(cut + 1);
-                d.nm.style.color = c.e.css;
-                d.el.style.borderLeftColor = c.e.css;
-            }
-            d.el.style.display = 'block';
-            d.el.style.left = rect.left + c.x + 12 + 'px';
-            d.el.style.top = rect.top + c.y - 14 + row * 32 + 'px';
-        }
+        collectTipLabels(rect, cands);
+        collectNodeLabels(rect, cands);
+        placeLabels(cands, rect);
     }
 
     // resize
@@ -663,12 +892,235 @@ export function renderGraph(container, graph, opts) {
         composer.setSize(container.clientWidth || width, container.clientHeight || height);
     }
 
+    // ---- filtres centralisés : toutes les visibilités passent par
+    // recompact(np, ep) — le zoom sémantique s'y compose, et le mode
+    // "flat" le ré-invoque après avoir réécrit les positions.
+    const edgeSlotToSolid = new Int32Array(nEdges); // slot visible → index dans solidEdges
+    let lastCompact = { np: () => true, ep: () => true };
+    // Zoom sémantique : de loin, seuls les "story beats" (merges, tips,
+    // tags) restent — le détail réapparaît en zoomant. Hystérésis pour
+    // éviter le clignotement à la limite.
+    let summaryZoomOn = true;
+    let summaryActive = false;
+    const summaryWorth = n =>
+        (n.parents?.length ?? 0) >= 2 || !!n.isTip || !!(n.tags && n.tags.length);
+    function recompact(np, ep) {
+        lastCompact = { np, ep };
+        const nodePass = n => np(n) && (!summaryActive || summaryWorth(n));
+        const edgePass = e => ep(e) && (!summaryActive || summaryWorth(nodeById.get(e.source)));
+        let vi = 0, hi = 0;
+        for (let i = 0; i < graph.nodes.length; i++) {
+            const n = graph.nodes[i];
+            m.fromArray(baseNodeMatrices, i * 16);
+            if (nodePass(n)) {
+                nodesVisible.setMatrixAt(vi, m);
+                nodesVisible.setColorAt(vi, nodeColorOf(n));
+                slotToNode[vi] = i;
+                nodeToSlot[i] = vi;
+                vi++;
+            } else {
+                nodesHidden.setMatrixAt(hi, m);
+                nodesHidden.setColorAt(hi, nodeColorOf(n));
+                nodeToSlot[i] = -1;
+                hi++;
+            }
+        }
+        nodesVisible.count = vi;
+        nodesHidden.count = hi;
+        nodesVisible.instanceMatrix.needsUpdate = true;
+        nodesVisible.instanceColor.needsUpdate = true;
+        nodesHidden.instanceMatrix.needsUpdate = true;
+        nodesHidden.instanceColor.needsUpdate = true;
+        let evi = 0, ehi = 0;
+        for (let i = 0; i < ei && i < solidEdges.length; i++) {
+            const e = solidEdges[i];
+            const s = nodeById.get(e.source);
+            if (!s) continue;
+            m.fromArray(baseEdgeMatrices, i * 16);
+            if (edgePass(e)) {
+                edgesVisible.setMatrixAt(evi, m);
+                edgesVisible.setColorAt(evi, edgeColorOf(s));
+                edgeSlotToSolid[evi] = i;
+                evi++;
+            } else {
+                edgesHidden.setMatrixAt(ehi, m);
+                edgesHidden.setColorAt(ehi, edgeColorOf(s));
+                ehi++;
+            }
+        }
+        edgesVisible.count = evi;
+        edgesHidden.count = ehi;
+        edgesVisible.instanceMatrix.needsUpdate = true;
+        edgesVisible.instanceColor.needsUpdate = true;
+        edgesHidden.instanceMatrix.needsUpdate = true;
+        edgesHidden.instanceColor.needsUpdate = true;
+    }
+    // Re-teint couleurs seules (highlight de chemin) — pas de recompaction.
+    function retint() {
+        for (let vi = 0; vi < nodesVisible.count; vi++) {
+            nodesVisible.setColorAt(vi, nodeColorOf(graph.nodes[slotToNode[vi]]));
+        }
+        nodesVisible.instanceColor.needsUpdate = true;
+        for (let evi = 0; evi < edgesVisible.count; evi++) {
+            const e = solidEdges[edgeSlotToSolid[evi]];
+            const s = e && nodeById.get(e.source);
+            if (s) edgesVisible.setColorAt(evi, edgeColorOf(s));
+        }
+        edgesVisible.instanceColor.needsUpdate = true;
+    }
+    // Compaction initiale : tout visible (cartographie edgeSlotToSolid).
+    for (let i = 0; i < ei; i++) edgeSlotToSolid[i] = i;
+
+    // Mode "flat" : déroule le graphe en plan 2D — en vues cylindriques x
+    // devient l'arc (angle × rayon : les lanes s'alignent côte à côte),
+    // ailleurs on écrase juste z. flatK 0→1 animé (~0,4 s, lerp par frame).
+    let flatK = 0;
+    let flatTarget = 0;
+    const flatXOf = n => ((n.radius ?? 0) > 1 ? n.angle * n.radius : n.bx);
+    function applyPositions() {
+        for (const n of graph.nodes) {
+            if (horizontal) {
+                n.x = n.bx;
+                n.y = n.by;
+                n.z = n.bz * (1 - flatK);
+            } else {
+                n.x = n.bx + (flatXOf(n) - n.bx) * flatK;
+                n.y = n.by;
+                n.z = n.bz * (1 - flatK);
+            }
+        }
+        // Réécrit les matrices de base + les arêtes depuis les positions.
+        for (let i = 0; i < graph.nodes.length; i++) {
+            const n = graph.nodes[i];
+            pos.set(n.x, n.y, n.z);
+            scl.set(n._r, n._r, n._r);
+            m.compose(pos, idq, scl);
+            m.toArray(baseNodeMatrices, i * 16);
+        }
+        let wi = 0;
+        for (const e of solidEdges) {
+            if (wi >= nEdges) break;
+            const s = nodeById.get(e.source);
+            const t = nodeById.get(e.target);
+            if (!s || !t) continue;
+            a.set(s.x, s.y, s.z);
+            b.set(t.x, t.y, t.z);
+            dir.subVectors(b, a);
+            const len = dir.length() || 0.001;
+            mid.addVectors(a, b).multiplyScalar(0.5);
+            q.setFromUnitVectors(up, dir.clone().normalize());
+            const w = edgeWOf(len);
+            m.compose(mid, q, new THREE.Vector3(w, len, w));
+            m.toArray(baseEdgeMatrices, wi * 16);
+            wi++;
+        }
+        rebuildDashed();
+        recompact(lastCompact.np, lastCompact.ep);
+        if (selectedIndex >= 0) {
+            const n = graph.nodes[selectedIndex];
+            selection.position.set(n.x, n.y, n.z);
+        }
+    }
+
+    // ---- mini-carte : le graphe "déroulé" (temps × lane) en vue 2D avec
+    // la position de la caméra — repère d'orientation permanent.
+    const mini = document.createElement('canvas');
+    mini.width = 200;
+    mini.height = 140;
+    mini.style.cssText =
+        'position:fixed;right:10px;bottom:14px;z-index:8;opacity:.85;pointer-events:none;' +
+        'border:1px solid var(--border);border-radius:6px;background:var(--overlay);';
+    document.body.appendChild(mini);
+    const miniCtx = mini.getContext('2d');
+    const mmHoriz = horizontal;
+    const mmCyl = graph.nodes.some(n => (n.radius ?? 0) > 1);
+    // u = temps (coords de base), v = lane (arc cylindrique ou axe orthogonal)
+    const mmUVN = n => ({
+        u: mmHoriz ? n.bx : n.by,
+        v: mmCyl ? n.angle * n.radius : mmHoriz ? n.by : n.bx,
+    });
+    const mmUVC = p => ({
+        u: mmHoriz ? p.x : p.y,
+        v: mmCyl ? Math.atan2(p.z, p.x) * Math.hypot(p.x, p.z) : mmHoriz ? p.y : p.x,
+    });
+    const mm = { u0: Infinity, u1: -Infinity, v0: Infinity, v1: -Infinity };
+    for (const n of graph.nodes) {
+        const { u, v } = mmUVN(n);
+        if (u < mm.u0) mm.u0 = u;
+        if (u > mm.u1) mm.u1 = u;
+        if (v < mm.v0) mm.v0 = v;
+        if (v > mm.v1) mm.v1 = v;
+    }
+    const cssCache = new Map();
+    const cssOf = bid => {
+        let c = cssCache.get(bid);
+        if (!c) {
+            c = '#' + colorOf(bid).toString(16).padStart(6, '0');
+            cssCache.set(bid, c);
+        }
+        return c;
+    };
+    let miniLast = 0;
+    function drawMini(t) {
+        if (t - miniLast < 150) return; // ~7 fps — suffit pour s'orienter
+        miniLast = t;
+        const w = mini.width, h = mini.height, pad = 7;
+        const us = mm.u1 - mm.u0 || 1, vs = mm.v1 - mm.v0 || 1;
+        const px = u => pad + ((u - mm.u0) / us) * (w - 2 * pad);
+        const py = v => pad + ((v - mm.v0) / vs) * (h - 2 * pad);
+        miniCtx.clearRect(0, 0, w, h);
+        const step = Math.max(1, Math.floor(graph.nodes.length / 15000));
+        for (let i = 0; i < graph.nodes.length; i += step) {
+            const n = graph.nodes[i];
+            if (lastNodeFilter && !lastNodeFilter(n)) continue;
+            if (summaryActive && !summaryWorth(n)) continue;
+            const { u, v } = mmUVN(n);
+            miniCtx.fillStyle = cssOf(n.branch);
+            miniCtx.fillRect(px(u) - 1, py(v) - 1, 2, 2);
+        }
+        // caméra → cible : où on regarde dans le graphe
+        const cp = mmUVC(camera.position);
+        const tp = mmUVC(controls.target);
+        miniCtx.strokeStyle = 'rgba(255,255,255,.6)';
+        miniCtx.beginPath();
+        miniCtx.moveTo(px(cp.u), py(cp.v));
+        miniCtx.lineTo(px(tp.u), py(tp.v));
+        miniCtx.stroke();
+        miniCtx.beginPath();
+        miniCtx.arc(px(cp.u), py(cp.v), 4, 0, 7);
+        miniCtx.stroke();
+        miniCtx.fillStyle = '#fff';
+        miniCtx.beginPath();
+        miniCtx.arc(px(tp.u), py(tp.v), 2.5, 0, 7);
+        miniCtx.fill();
+    }
+
     // animate
     let raf = 0;
     function animate() {
         raf = requestAnimationFrame(animate);
         stepCamAnim();
-        updateTipLabels(); // branch tip cards (last commit of each branch)
+        updateLabels(); // tip cards + merge/tag labels (collision-placed)
+        if (flatK !== flatTarget) {
+            flatK += (flatTarget - flatK) * 0.16; // ~25 frames, lerp amorti
+            if (Math.abs(flatTarget - flatK) < 0.004) flatK = flatTarget;
+            applyPositions();
+        }
+        laneGroup.visible = flatK < 0.5; // les guides 3D ne suivent pas le déroulage
+        if (summaryZoomOn) {
+            // Seuil relatif à l'envergure du graphe : le cadrage initial
+            // reste plein, un vrai zoom arrière passe en "story beats".
+            const dCam = camera.position.distanceTo(controls.target);
+            const want = summaryActive ? dCam > maxDim * 1.3 : dCam > maxDim * 1.5;
+            if (want !== summaryActive) {
+                summaryActive = want;
+                recompact(lastCompact.np, lastCompact.ep);
+            }
+        } else if (summaryActive) {
+            summaryActive = false;
+            recompact(lastCompact.np, lastCompact.ep);
+        }
+        drawMini(performance.now());
         if (!camAnim.active) controls.update();
         const t = performance.now() * 0.001;
         if (selection.visible) {
@@ -689,18 +1141,6 @@ export function renderGraph(container, graph, opts) {
     const stats = document.getElementById('gengit3d-stats');
     if (stats) {
         stats.textContent = `commits: ${graph.nodes.length} | branches: ${graph.branches.length} | edges: ${graph.edges.length} | head: ${graph.head?.slice(0, 7) ?? '?'}`;
-    }
-
-    // Store base matrices for filtering (avoid re-reading from InstancedMesh)
-    const baseNodeMatrices = new Float32Array(graph.nodes.length * 16);
-    const baseEdgeMatrices = new Float32Array(nEdges * 16);
-    for (let i = 0; i < graph.nodes.length; i++) {
-        nodesVisible.getMatrixAt(i, m);
-        m.toArray(baseNodeMatrices, i * 16);
-    }
-    for (let i = 0; i < ei; i++) {
-        edgesVisible.getMatrixAt(i, m);
-        m.toArray(baseEdgeMatrices, i * 16);
     }
 
     const api = {
@@ -727,60 +1167,7 @@ export function renderGraph(container, graph, opts) {
          */
         setTipsVisible(visible) {
             lastNodeFilter = n => visible || !n.isTip;
-            // Filter nodes: hide synthetic tips
-            let vi = 0,
-                hi = 0;
-            for (let i = 0; i < graph.nodes.length; i++) {
-                const n = graph.nodes[i];
-                const isTip = n.isTip;
-                const show = visible || !isTip;
-                m.fromArray(baseNodeMatrices, i * 16);
-                if (show) {
-                    nodesVisible.setMatrixAt(vi, m);
-                    nodesVisible.setColorAt(vi, nodeColorOf(n));
-                    slotToNode[vi] = i;
-                    nodeToSlot[i] = vi;
-                    vi++;
-                } else {
-                    nodesHidden.setMatrixAt(hi, m);
-                    nodesHidden.setColorAt(hi, nodeColorOf(n));
-                    nodeToSlot[i] = -1;
-                    hi++;
-                }
-            }
-            nodesVisible.count = vi;
-            nodesHidden.count = hi;
-            nodesVisible.instanceMatrix.needsUpdate = true;
-            nodesVisible.instanceColor.needsUpdate = true;
-            nodesHidden.instanceMatrix.needsUpdate = true;
-            nodesHidden.instanceColor.needsUpdate = true;
-            // Filter edges: hide dashed edges
-            let evi = 0,
-                ehi = 0;
-            for (let i = 0; i < ei; i++) {
-                const e = graph.edges[i];
-                const isDashed = e.dashed;
-                const show = visible || !isDashed;
-                const s = nodeById.get(e.source);
-                if (!s) continue;
-                m.fromArray(baseEdgeMatrices, i * 16);
-                if (show) {
-                    edgesVisible.setMatrixAt(evi, m);
-                    edgesVisible.setColorAt(evi, tintOf(s.branch));
-                    evi++;
-                } else {
-                    edgesHidden.setMatrixAt(ehi, m);
-                    edgesHidden.setColorAt(ehi, tintOf(s.branch));
-                    ehi++;
-                }
-            }
-            edgesVisible.count = evi;
-            edgesHidden.count = ehi;
-            edgesVisible.instanceMatrix.needsUpdate = true;
-            edgesVisible.instanceColor.needsUpdate = true;
-            edgesHidden.instanceMatrix.needsUpdate = true;
-            edgesHidden.instanceColor.needsUpdate = true;
-            // Toggle dashed line group visibility
+            recompact(lastNodeFilter, () => true); // solid edges all stay (dashed are line segments)
             dashedGroup.visible = visible;
         },
         /**
@@ -791,56 +1178,10 @@ export function renderGraph(container, graph, opts) {
          */
         setBranchFilter(visibleBranchIds) {
             lastNodeFilter = n => !visibleBranchIds || visibleBranchIds.has(n.branch);
-            let vi = 0,
-                hi = 0;
-            for (let i = 0; i < graph.nodes.length; i++) {
-                const n = graph.nodes[i];
-                const isVisible = !visibleBranchIds || visibleBranchIds.has(n.branch);
-                m.fromArray(baseNodeMatrices, i * 16);
-                if (isVisible) {
-                    nodesVisible.setMatrixAt(vi, m);
-                    nodesVisible.setColorAt(vi, tintOf(n.branch));
-                    slotToNode[vi] = i;
-                    nodeToSlot[i] = vi;
-                    vi++;
-                } else {
-                    nodesHidden.setMatrixAt(hi, m);
-                    nodesHidden.setColorAt(hi, tintOf(n.branch));
-                    nodeToSlot[i] = -1;
-                    hi++;
-                }
-            }
-            nodesVisible.count = vi;
-            nodesHidden.count = hi;
-            nodesVisible.instanceMatrix.needsUpdate = true;
-            nodesVisible.instanceColor.needsUpdate = true;
-            nodesHidden.instanceMatrix.needsUpdate = true;
-            nodesHidden.instanceColor.needsUpdate = true;
-            // edges
-            let evi = 0,
-                ehi = 0;
-            for (let i = 0; i < ei; i++) {
-                const e = graph.edges[i];
+            recompact(lastNodeFilter, e => {
                 const s = nodeById.get(e.source);
-                if (!s) continue;
-                m.fromArray(baseEdgeMatrices, i * 16);
-                const isVisible = !visibleBranchIds || visibleBranchIds.has(s.branch);
-                if (isVisible) {
-                    edgesVisible.setMatrixAt(evi, m);
-                    edgesVisible.setColorAt(evi, tintOf(s.branch));
-                    evi++;
-                } else {
-                    edgesHidden.setMatrixAt(ehi, m);
-                    edgesHidden.setColorAt(ehi, tintOf(s.branch));
-                    ehi++;
-                }
-            }
-            edgesVisible.count = evi;
-            edgesHidden.count = ehi;
-            edgesVisible.instanceMatrix.needsUpdate = true;
-            edgesVisible.instanceColor.needsUpdate = true;
-            edgesHidden.instanceMatrix.needsUpdate = true;
-            edgesHidden.instanceColor.needsUpdate = true;
+                return s && (!visibleBranchIds || visibleBranchIds.has(s.branch));
+            });
         },
         /**
          * Filter nodes/edges by date range. Nodes outside [minDate, maxDate]
@@ -853,58 +1194,12 @@ export function renderGraph(container, graph, opts) {
                 const t = Date.parse(n.date);
                 return !Number.isFinite(t) || ((!minDate || t >= minDate) && (!maxDate || t <= maxDate));
             };
-            let vi = 0,
-                hi = 0;
-            for (let i = 0; i < graph.nodes.length; i++) {
-                const n = graph.nodes[i];
-                const t = Date.parse(n.date);
-                const inRange = !Number.isFinite(t) || ((!minDate || t >= minDate) && (!maxDate || t <= maxDate));
-                m.fromArray(baseNodeMatrices, i * 16);
-                if (inRange) {
-                    nodesVisible.setMatrixAt(vi, m);
-                    nodesVisible.setColorAt(vi, tintOf(n.branch));
-                    slotToNode[vi] = i;
-                    nodeToSlot[i] = vi;
-                    vi++;
-                } else {
-                    nodesHidden.setMatrixAt(hi, m);
-                    nodesHidden.setColorAt(hi, tintOf(n.branch));
-                    nodeToSlot[i] = -1;
-                    hi++;
-                }
-            }
-            nodesVisible.count = vi;
-            nodesHidden.count = hi;
-            nodesVisible.instanceMatrix.needsUpdate = true;
-            nodesVisible.instanceColor.needsUpdate = true;
-            nodesHidden.instanceMatrix.needsUpdate = true;
-            nodesHidden.instanceColor.needsUpdate = true;
-            // edges
-            let evi = 0,
-                ehi = 0;
-            for (let i = 0; i < ei; i++) {
-                const e = graph.edges[i];
+            recompact(lastNodeFilter, e => {
                 const s = nodeById.get(e.source);
-                if (!s) continue;
+                if (!s) return false;
                 const t = Date.parse(s.date);
-                const inRange = !Number.isFinite(t) || ((!minDate || t >= minDate) && (!maxDate || t <= maxDate));
-                m.fromArray(baseEdgeMatrices, i * 16);
-                if (inRange) {
-                    edgesVisible.setMatrixAt(evi, m);
-                    edgesVisible.setColorAt(evi, tintOf(s.branch));
-                    evi++;
-                } else {
-                    edgesHidden.setMatrixAt(ehi, m);
-                    edgesHidden.setColorAt(ehi, tintOf(s.branch));
-                    ehi++;
-                }
-            }
-            edgesVisible.count = evi;
-            edgesHidden.count = ehi;
-            edgesVisible.instanceMatrix.needsUpdate = true;
-            edgesVisible.instanceColor.needsUpdate = true;
-            edgesHidden.instanceMatrix.needsUpdate = true;
-            edgesHidden.instanceColor.needsUpdate = true;
+                return !Number.isFinite(t) || ((!minDate || t >= minDate) && (!maxDate || t <= maxDate));
+            });
         },
         /**
          * Frame the graph with an animated camera flight.
@@ -945,10 +1240,24 @@ export function renderGraph(container, graph, opts) {
             tipLabelsOn = !!on;
             if (!tipLabelsOn) for (const d of tlDivs) d.el.style.display = 'none';
         },
+        setLabelsVisible(on) {
+            labelsOn = !!on;
+            if (!labelsOn) for (const el of nlDivs) el.style.display = 'none';
+        },
+        setFlat(on) {
+            flatTarget = on ? 1 : 0;
+            if (on) api.fitView('front'); // regarder le plan en face
+        },
+        setSummaryZoom(on) {
+            summaryZoomOn = !!on;
+        },
         dispose() {
             cancelAnimationFrame(raf);
             disposeComposer();
-            for (const d of tlDivs) d.el.remove(); // appended to body, not container
+            if (pathTimer) clearTimeout(pathTimer);
+            mini.remove();
+            for (const el of nlDivs) el.remove(); // appended to body, not container
+            for (const d of tlDivs) d.el.remove();
             controls.dispose();
             renderer.dispose();
         },

@@ -223,6 +223,10 @@ function draw(graph: Graph, label: string | null) {
     if (labEl0 && currentScene.setLabelsVisible) currentScene.setLabelsVisible(labEl0.checked);
     const tipEl0 = document.getElementById('gengit3d-tips') as HTMLInputElement | null;
     if (tipEl0 && currentScene.setTipLabelsVisible) currentScene.setTipLabelsVisible(tipEl0.checked);
+    const flatEl0 = document.getElementById('gengit3d-flat') as HTMLInputElement | null;
+    if (flatEl0 && currentScene.setFlat) currentScene.setFlat(flatEl0.checked);
+    const sumEl0 = document.getElementById('gengit3d-summary') as HTMLInputElement | null;
+    if (sumEl0 && currentScene.setSummaryZoom) currentScene.setSummaryZoom(sumEl0.checked);
     updateNowHud(graph);
     // Replay : un nouveau graphe repart affiché en entier (p = 1), période
     // réinitialisée sur toute la frise, suivi caméra coupé
@@ -877,6 +881,19 @@ function initUI() {
     const tipEl = document.getElementById('gengit3d-tips') as HTMLInputElement | null;
     tipEl?.addEventListener('change', () => {
         if (currentScene && currentScene.setTipLabelsVisible) currentScene.setTipLabelsVisible(tipEl.checked);
+    });
+    const flatEl = document.getElementById('gengit3d-flat') as HTMLInputElement | null;
+    flatEl?.addEventListener('change', () => {
+        if (currentScene && currentScene.setFlat) currentScene.setFlat(flatEl.checked);
+    });
+    const sumEl = document.getElementById('gengit3d-summary') as HTMLInputElement | null;
+    sumEl?.addEventListener('change', () => {
+        if (currentScene && currentScene.setSummaryZoom) currentScene.setSummaryZoom(sumEl.checked);
+    });
+    const keyBtn = document.getElementById('gengit3d-key') as HTMLButtonElement | null;
+    keyBtn?.addEventListener('click', () => {
+        const hud = document.getElementById('gengit3d-key-hud');
+        if (hud) hud.style.display = hud.style.display === 'none' ? 'block' : 'none';
     });
     // Playback événementiel : on DWELL ~1,5 s sur CHAQUE commit (le temps
     // de lire son étiquette — tag dédié épinglé au nœud), puis TRAVEL

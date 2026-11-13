@@ -20,9 +20,12 @@
     #app { position: fixed; inset: 0; }
     #gengit3d-stats { position: fixed; top: 10px; left: 10px; font: 12px monospace; background: var(--overlay); color: var(--text); padding: 6px 10px; border-radius: 6px; z-index: 5; border: 1px solid var(--border); }
     #gengit3d-help { position: fixed; bottom: 10px; left: 10px; font: 11px monospace; color: var(--muted); z-index: 5; }
+    #gengit3d-key-hud { position: fixed; bottom: 30px; left: 10px; font: 11px monospace; color: var(--text); z-index: 9; background: var(--overlay); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; line-height: 1.5; max-width: 460px; }
+    #gengit3d-key-hud b { color: var(--accent); }
     #gengit3d-loading { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; font: 16px monospace; color: var(--muted); z-index: 4; text-align: center; padding: 0 20px; }
     .err { color: var(--err); }
-    #gengit3d-bar { position: fixed; top: 10px; left: 50%; transform: translateX(-50%); z-index: 6; display: flex; gap: 4px; align-items: center; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 5px 8px; box-shadow: 0 6px 22px #0005; flex-wrap: wrap; max-width: 96vw; justify-content: center; backdrop-filter: blur(10px); }
+    #gengit3d-topwrap { position: fixed; top: 10px; left: 50%; transform: translateX(-50%); z-index: 6; display: flex; flex-direction: column; align-items: center; gap: 8px; max-width: 96vw; }
+    #gengit3d-bar { display: flex; gap: 4px; align-items: center; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 5px 8px; box-shadow: 0 6px 22px #0005; flex-wrap: wrap; max-width: 96vw; justify-content: center; backdrop-filter: blur(10px); }
     #gengit3d-bar .brand { display: flex; align-items: center; padding: 0 3px; user-select: none; }
     #gengit3d-bar .group { display: flex; gap: 4px; align-items: center; }
     #gengit3d-bar .sep { width: 1px; align-self: stretch; background: var(--border); margin: 0 4px; }
@@ -37,7 +40,7 @@
     #gengit3d-bar label { font: 10px monospace; color: var(--muted); display: flex; align-items: center; gap: 5px; white-space: nowrap; }
     #gengit3d-bar input[type="checkbox"] { accent-color: var(--accent); margin: 0; }
     #gengit3d-bar.collapsed > *:not(#gengit3d-bar-toggle) { display: none; }
-    #gengit3d-status { position: fixed; top: 58px; left: 50%; transform: translateX(-50%); z-index: 6; font: 11px monospace; color: var(--muted); background: var(--overlay); padding: 4px 10px; border-radius: 5px; max-width: 90vw; }
+    #gengit3d-status { font: 11px monospace; color: var(--muted); background: var(--overlay); padding: 4px 10px; border-radius: 5px; max-width: 90vw; }
     #gengit3d-status.busy { color: var(--busy); }
     #gengit3d-status.err { color: var(--err); }
 
@@ -105,6 +108,7 @@
 <body>
   <div id="app"></div>
 
+  <div id="gengit3d-topwrap">
   <div id="gengit3d-bar">
     <button id="gengit3d-bar-toggle" class="icon-btn" title="collapse/expand the toolbar">–</button>
     <svg class="brand" width="15" height="15" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="3" r="2.4" fill="var(--accent)"/><circle cx="4" cy="13" r="2.4" fill="var(--accent)" opacity=".65"/><circle cx="12" cy="13" r="2.4" fill="var(--accent)" opacity=".65"/><path d="M8 5.4v3M8 8.4 4.7 11M8 8.4l3.3 2.6" stroke="var(--accent)" stroke-width="1.2" fill="none"/></svg>
@@ -146,17 +150,28 @@
         <option value="trails">fx: trails</option>
       </select>
       <label title="rotate the view automatically"><input id="gengit3d-rotate" type="checkbox" /> rotate</label>
+      <label title="always-on labels for merges and tags (nearest ~24)"><input id="gengit3d-labels" type="checkbox" /> labels</label>
       <label title="branch tip cards (last commit of each branch) + stash/empty-branch tip markers"><input id="gengit3d-tips" type="checkbox" checked /> tips</label>
+      <label title="unroll the graph into a 2D plane — lanes side by side, like a classic git graph"><input id="gengit3d-flat" type="checkbox" /> flat</label>
+      <label title="far zoom keeps only merges, branch tips and tags — the story beats"><input id="gengit3d-summary" type="checkbox" checked /> sum</label>
+      <button id="gengit3d-key" class="icon-btn" title="legend — reading aids">?</button>
     </div>
     <div class="sep"></div>
     <div class="group">
       <button id="gengit3d-legend-toggle" title="show/hide branch legend">Branches</button>
     </div>
   </div>
+  <div id="gengit3d-status"></div>
+  </div>
 
   <div id="gengit3d-stats">loading…</div>
-  <div id="gengit3d-status"></div>
-  <div id="gengit3d-help">drag: rotate · scroll: zoom · right-drag: pan · click a commit: details + zoom · hover: info</div>
+  <div id="gengit3d-help">drag: rotate · scroll: zoom · right-drag: pan · click a commit: details + zoom · hover: info + commit path</div>
+  <div id="gengit3d-key-hud" style="display:none">
+    <div class="row"><b>tips</b> ⎇ card = last commit of each branch (name · hash · subject)</div>
+    <div class="row"><b>hover</b> brightens the commit's path · <b>click</b> = details + zoom</div>
+    <div class="row"><b>zoom</b> far = summary (merges / tips / tags) · close = full detail · <b>flat</b> = 2D lanes</div>
+    <div class="row"><b>aids</b> lane guides · date rings · bottom-right minimap = where you are</div>
+  </div>
   <div id="gengit3d-loading">loading gengit3d.graph.json …</div>
 
   <aside id="gengit3d-legend">
@@ -263,6 +278,13 @@
       // tips toggle is also a state: markers + labels
       if (current.setTipsVisible) current.setTipsVisible(tipsEl.checked);
       if (current.setTipLabelsVisible) current.setTipLabelsVisible(tipsEl.checked);
+      // labels/flat/sum toggles persist across redraws too
+      const labelsEl0 = document.getElementById('gengit3d-labels');
+      if (labelsEl0 && current.setLabelsVisible) current.setLabelsVisible(labelsEl0.checked);
+      const flatEl0 = document.getElementById('gengit3d-flat');
+      if (flatEl0 && current.setFlat) current.setFlat(flatEl0.checked);
+      const sumEl0 = document.getElementById('gengit3d-summary');
+      if (sumEl0 && current.setSummaryZoom) current.setSummaryZoom(sumEl0.checked);
       buildLegend(graph);
       if (label) setStatus(label);
     }
@@ -426,6 +448,23 @@
     function openDetail() { detail.classList.add('open'); }
     document.getElementById('gengit3d-detail-close').addEventListener('click', () => detail.classList.remove('open'));
 
+    // fetch JSON, but report a CLEAR error when the server has no API
+    // (static file server → 404 empty body → "unexpected end of data")
+    async function fetchJson(url) {
+      const res = await fetch(url, { cache: 'no-store' });
+      const text = await res.text();
+      let d = null;
+      try { d = text ? JSON.parse(text) : null; } catch { /* not JSON */ }
+      if (!res.ok) {
+        throw new Error(d?.error ||
+          (res.status === 404 && !d
+            ? 'no API on this server — run `gengit3d serve` (a plain static server cannot clone or parse repos)'
+            : 'HTTP ' + res.status));
+      }
+      if (!d) throw new Error('empty response from server (API missing — run `gengit3d serve`)');
+      return d;
+    }
+
     async function showCommitDetails(node, ctx) {
       openDetail();
       const repo = (ctx && ctx.repo) || (currentSource && currentSource.repo);
@@ -433,9 +472,7 @@
       if (!repo) { detailBody.innerHTML = '<div class="empty">no repo source — re-render from a path/URL.</div>'; return; }
       try {
         const qs = 'repo=' + encodeURIComponent(repo) + '&hash=' + encodeURIComponent(node.id) + '&maxPatch=60000';
-        const res = await fetch('/api/commit?' + qs, { cache: 'no-store' });
-        const d = await res.json();
-        if (!res.ok) throw new Error(d.error || ('HTTP ' + res.status));
+        const d = await fetchJson('/api/commit?' + qs);
         const files = (d.files || []).map((f) => `<li><span class="a">+${f.added ?? '–'}</span><span class="d">-${f.deleted ?? '–'}</span><span class="p">${esc(f.path)}</span></li>`).join('');
         detailBody.innerHTML =
           `<h2>${esc(d.short)} — ${esc(d.subject)}</h2>` +
@@ -457,9 +494,7 @@
       setStatus('loading…', 'busy');
       renderBtn.disabled = true;
       try {
-        const res = await fetch(endpoint + '?' + qs, { cache: 'no-store' });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+        const data = await fetchJson(endpoint + '?' + qs);
         draw(data, label(data), data.source);
       } catch (e) {
         setStatus('error: ' + e.message, 'err');
@@ -525,6 +560,26 @@
         if (current.setTipsVisible) current.setTipsVisible(tipsEl.checked);
         if (current.setTipLabelsVisible) current.setTipLabelsVisible(tipsEl.checked);
     });
+    // labels toggle: permanent merge/tag labels
+    const labelsEl = document.getElementById('gengit3d-labels');
+    labelsEl.addEventListener('change', () => {
+        if (current && current.setLabelsVisible) current.setLabelsVisible(labelsEl.checked);
+    });
+    // flat toggle: unroll the graph into a 2D plane (arc-length lanes)
+    const flatEl = document.getElementById('gengit3d-flat');
+    flatEl.addEventListener('change', () => {
+        if (current && current.setFlat) current.setFlat(flatEl.checked);
+    });
+    // sum toggle: far zoom keeps only merges/tips/tags
+    const sumEl = document.getElementById('gengit3d-summary');
+    sumEl.addEventListener('change', () => {
+        if (current && current.setSummaryZoom) current.setSummaryZoom(sumEl.checked);
+    });
+    // legend chip
+    document.getElementById('gengit3d-key').addEventListener('click', () => {
+        const hud = document.getElementById('gengit3d-key-hud');
+        if (hud) hud.style.display = hud.style.display === 'none' ? 'block' : 'none';
+    });
 
     // theme <select>
     themeSel.innerHTML = Object.entries(THEMES)
@@ -536,8 +591,7 @@
     // Populate the datalist with git repos discoverable server-side.
     (async function loadRepos() {
       try {
-        const res = await fetch('/api/repos', { cache: 'no-store' });
-        const { repos } = await res.json();
+        const { repos } = await fetchJson('/api/repos');
         const dl = document.getElementById('gengit3d-repos');
         dl.innerHTML = (repos || []).map((r) => `<option value="${esc(r)}"></option>`).join('');
         if (repos && repos.length) input.setAttribute('placeholder', `repo path or git URL — e.g. ${repos[0]}`);

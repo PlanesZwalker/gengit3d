@@ -174,6 +174,27 @@ export function renderGraph(container: HTMLElement, graph: any, opts: any) {
     scene.add(rim);
 
     const nodeById = new Map(graph.nodes.map((n: any) => [n.id, n]));
+    // Liens enfants (parent → enfants) pour le highlight de chemin au
+    // survol : les ancêtres+descendants gardent leurs couleurs, le reste
+    // s'éteint — on lit le "fil" d'un commit dans le nuage.
+    const childOf = new Map<string, string[]>();
+    for (const e of graph.edges) {
+        let l = childOf.get(e.target);
+        if (!l) childOf.set(e.target, (l = []));
+        l.push(e.source);
+    }
+    const PATH_CAP = 600; // borne le BFS — un nœud central ne repeint pas tout
+    const pathAround = (id: string) => {
+        const out = new Set<string>([id]);
+        const q = [id];
+        while (q.length && out.size < PATH_CAP) {
+            const cur = q.shift()!;
+            const n: any = nodeById.get(cur);
+            for (const p of n?.parents ?? []) if (!out.has(p)) { out.add(p); q.push(p); }
+            for (const c of childOf.get(cur) ?? []) if (!out.has(c)) { out.add(c); q.push(c); }
+        }
+        return out;
+    };
     const colorOf = (branchId: string) => branchColorMap.get(branchId) ?? 0x4f9dff;
     const TIP_COLORS: Record<string, number> = { stash: 0xff8c42, 'empty-branch': 0x8b93a7, uncommitted: 0xf2c14e };
     const tipColorOf = (n: any) => {
@@ -201,6 +222,7 @@ export function renderGraph(container: HTMLElement, graph: any, opts: any) {
     // (appartiennent à refs/remotes/*) sont désaturés en mode branche.
     let colorMode: 'branch' | 'author' | 'age' = 'branch';
     let hotspotSet: Set<string> | null = null; // ids "liés" — le reste s'éteint
+    let pathSet: Set<string> | null = null; // ids du chemin survolé — idem
     const authorColorCache = new Map<string, THREE.Color>();
     const authorColorOf = (name: string) => {
         let c = authorColorCache.get(name);
@@ -229,6 +251,7 @@ export function renderGraph(container: HTMLElement, graph: any, opts: any) {
                     : tintOf(n.branch).clone();
         if (n.remote && colorMode === 'branch' && tipC === null) c.lerp(RECEDE, 0.55);
         if (hotspotSet && !hotspotSet.has(n.id)) c.lerp(bgFade, 0.78);
+        if (pathSet && !pathSet.has(n.id)) c.lerp(bgFade, 0.8);
         return c;
     };
     // Encodage "poids" : churn (lignes touchées) → taille du nœud +
@@ -306,6 +329,34 @@ export function renderGraph(container: HTMLElement, graph: any, opts: any) {
         const k = (replayP - (n._tk ?? 0)) / REPLAY_W;
         return k <= 0 ? 0 : k >= 1 ? 1 : k * k * (3 - 2 * k);
     };
+    // Mode "flat" : déroule le graphe en plan 2D — en vues cylindriques x
+    // devient l'arc (angle × rayon : les lanes s'alignent côte à côte),
+    // ailleurs on écrase juste z. flatK 0→1 animé (~0,4 s, lerp par frame).
+    let flatK = 0;
+    let flatTarget = 0;
+    const flatXOf = (n: any) => ((n.radius ?? 0) > 1 ? n.angle * n.radius : n.bx);
+    const applyPositions = () => {
+        const horiz = graph.axis?.orient === 'x';
+        for (const n of graph.nodes) {
+            if (horiz) {
+                n.x = n.bx * spacing;
+                n.y = n.by;
+                n.z = n.bz * (1 - flatK);
+            } else {
+                n.x = n.bx + (flatXOf(n) - n.bx) * flatK;
+                n.y = n.by * spacing;
+                n.z = n.bz * (1 - flatK);
+            }
+        }
+        applyEdgeFilter(); // rebuild nœuds + arêtes visibles
+        rebuildSegs(); // tips + liens similaires
+        if (highlightMesh && selectedNode) {
+            highlightMesh.position.set(selectedNode.x, selectedNode.y, selectedNode.z);
+        }
+        if (hoverGlow.visible && hoverNode) {
+            hoverGlow.position.set(hoverNode.x, hoverNode.y, hoverNode.z);
+        }
+    };
     // Caméra "film" : focus = centroïde des nœuds en train de pop. Le front
     // de lecture saute de branche en branche à chaque frame ; suivre un nœud
     // unique ferait fouetter la caméra autour du cylindre — la moyenne sur
@@ -364,6 +415,16 @@ export function renderGraph(container: HTMLElement, graph: any, opts: any) {
     edgesHidden.instanceMatrix.setUsage(THREE.StaticDrawUsage);
     edgesVisible.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(nEdges * 3), 3);
     edgesHidden.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(nEdges * 3), 3);
+    // Arêtes longues (traversées de merge qui "barrent" la vue) : ×0.55 de
+    // largeur — elles restent tracées sans écraser les commits voisins.
+    const _edgeLens: number[] = [];
+    for (const e of solidEdges) {
+        const s = nodeById.get(e.source);
+        const t = nodeById.get(e.target);
+        if (s && t) _edgeLens.push(Math.hypot(s.x - t.x, s.y - t.y, s.z - t.z));
+    }
+    _edgeLens.sort((x, y) => x - y);
+    const LONG_EDGE = (_edgeLens[_edgeLens.length >> 1] || 1) * 6;
     let ei = 0;
     for (const e of solidEdges) {
         if (ei >= nEdges) break;
@@ -376,7 +437,8 @@ export function renderGraph(container: HTMLElement, graph: any, opts: any) {
         const len = dir.length() || 0.001;
         mid.addVectors(a, b).multiplyScalar(0.5);
         q.setFromUnitVectors(up, dir.clone().normalize());
-        m.compose(mid, q, new THREE.Vector3(edgeW(s), len, edgeW(s)));
+        const w = edgeW(s) * (len > LONG_EDGE ? 0.55 : 1);
+        m.compose(mid, q, new THREE.Vector3(w, len, w));
         edgesVisible.setMatrixAt(ei, m);
         edgesVisible.setColorAt(ei, nodeColorOf(s));
         ei++;
@@ -601,8 +663,66 @@ export function renderGraph(container: HTMLElement, graph: any, opts: any) {
             label.position.copy(main(pos).add(cross(horizontal ? -labelOff : labelOff)));
             axisGroup.add(label);
         }
+
+        // Strates de dates : un anneau tenu à chaque tick, dans le plan
+        // orthogonal à l'axe du temps — la position→date se lit à travers
+        // le nuage, pas seulement au pied de l'axe.
+        const ringR = maxDim * 0.55;
+        for (let i = 0; i <= tickCount; i++) {
+            const pos = aMin + (aMax - aMin) * (i / tickCount);
+            const pts = new THREE.EllipseCurve(0, 0, ringR, ringR)
+                .getPoints(72)
+                .map((p) =>
+                    horizontal ? new THREE.Vector3(pos, p.x, p.y) : new THREE.Vector3(p.x, pos, p.y)
+                );
+            axisGroup.add(
+                new THREE.LineLoop(
+                    new THREE.BufferGeometry().setFromPoints(pts),
+                    new THREE.LineBasicMaterial({ color: theme.axis, transparent: true, opacity: 0.06 })
+                )
+            );
+        }
         scene.add(axisGroup);
     }
+
+    // ---- guides de lanes : une verticale ténue par branche majeure, à
+    // l'angle/rayon moyens de ses nœuds — repère où "vit" chaque branche
+    // dans le cylindre. Les vues non cylindriques (radius ≈ 0) n'ont pas
+    // de lanes : rien à tracer.
+    const laneGroup = new THREE.Group();
+    {
+        const acc = new Map<string, { a: number; r: number; c: number }>();
+        let ly0 = Infinity, ly1 = -Infinity;
+        for (const n of graph.nodes) {
+            const v = n.by ?? n.y;
+            if (v < ly0) ly0 = v;
+            if (v > ly1) ly1 = v;
+            if ((n.radius ?? 0) < 1) continue; // vue plate : pas de lane
+            const e = acc.get(n.branch) || { a: 0, r: 0, c: 0 };
+            e.a += n.angle;
+            e.r += n.radius;
+            e.c++;
+            acc.set(n.branch, e);
+        }
+        if (ly1 - ly0 < 1) { ly0 = -maxDim * 0.5; ly1 = maxDim * 0.5; }
+        for (const [bid, e] of acc) {
+            if (!isMajor(bid)) continue;
+            const rad = e.r / e.c;
+            const px = Math.cos(e.a / e.c) * rad;
+            const pz = Math.sin(e.a / e.c) * rad;
+            const g = new THREE.BufferGeometry().setFromPoints([
+                new THREE.Vector3(px, ly0, pz),
+                new THREE.Vector3(px, ly1, pz),
+            ]);
+            laneGroup.add(
+                new THREE.Line(
+                    g,
+                    new THREE.LineBasicMaterial({ color: colorOf(bid), transparent: true, opacity: 0.12 })
+                )
+            );
+        }
+    }
+    scene.add(laneGroup);
 
     // ---- selection highlight ----
     let selectedNode: any = null;
@@ -711,6 +831,23 @@ export function renderGraph(container: HTMLElement, graph: any, opts: any) {
     );
     const tooltipDiv = tooltipCard.el;
 
+    // Highlight du chemin au survol — debounce ~180 ms : le re-teint de tout
+    // le graphe (couleurs + arêtes) est trop lourd pour suivre la souris.
+    let pathTimer: ReturnType<typeof setTimeout> | null = null;
+    let pathFor: any = undefined;
+    const schedulePath = (n: any | null) => {
+        if (n === pathFor) return;
+        pathFor = n;
+        if (pathTimer) clearTimeout(pathTimer);
+        pathTimer = setTimeout(() => {
+            const next = n ? pathAround(n.id) : null;
+            if (next !== pathSet) {
+                pathSet = next;
+                retintNow();
+            }
+        }, 180);
+    };
+
     renderer.domElement.addEventListener('pointermove', (e) => {
         const rect = renderer.domElement.getBoundingClientRect();
         mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
@@ -735,11 +872,13 @@ export function renderGraph(container: HTMLElement, graph: any, opts: any) {
                 }
                 hoverGlow.position.set(node.x, node.y, node.z);
                 hoverGlow.visible = true;
+                schedulePath(node);
             }
         } else {
             tooltipDiv.style.display = 'none';
             hoverGlow.visible = false;
             hoverNode = null;
+            schedulePath(null);
         }
     });
 
@@ -772,8 +911,55 @@ export function renderGraph(container: HTMLElement, graph: any, opts: any) {
     let presentShown: any = null;
     let movieGlow = false; // true si le halo a été posé par le film
 
+    // ---- Placement d'étiquettes mutualisé : les 4 couches (carte "en
+    // cours de lecture", tips de branches, merges/tags, tags film)
+    // soumettent des candidats priorisés ; le placer les trie (priorité
+    // puis profondeur) et résout les collisions en décalant vers le bas —
+    // plus jamais deux étiquettes l'une sur l'autre.
+    type Cand = { pri: number; z: number; x: number; y: number; w: number; h: number; el: HTMLElement; fill?: () => void };
+    const _tipProj = new THREE.Vector3();
+    const _placed: { x: number; y: number; w: number; h: number }[] = [];
+    const projectXY = (n: any, rect: DOMRect) => {
+        _tipProj.set(n.x, n.y, n.z).project(camera);
+        if (_tipProj.z > 1) return null;
+        return {
+            x: rect.left + (_tipProj.x * 0.5 + 0.5) * rect.width,
+            y: rect.top + (-_tipProj.y * 0.5 + 0.5) * rect.height,
+            z: _tipProj.z,
+        };
+    };
+    function placeLabels(cands: Cand[], rect: DOMRect) {
+        _placed.length = 0;
+        cands.sort((a, b) => a.pri - b.pri || a.z - b.z);
+        const bottom = rect.top + rect.height - 4;
+        for (const c of cands) {
+            let cy = c.y;
+            let ok = false;
+            for (let k = 0; k < 8 && cy + c.h <= bottom; k++, cy += c.h + 3) {
+                let hit = false;
+                for (const r of _placed) {
+                    if (c.x < r.x + r.w && c.x + c.w > r.x && cy < r.y + r.h && cy + c.h > r.y) {
+                        hit = true;
+                        break;
+                    }
+                }
+                if (!hit) {
+                    _placed.push({ x: c.x, y: cy, w: c.w, h: c.h });
+                    c.fill?.();
+                    c.el.style.left = c.x + 'px';
+                    c.el.style.top = cy + 'px';
+                    c.el.style.display = 'block';
+                    ok = true;
+                    break;
+                }
+            }
+            if (!ok) c.el.style.display = 'none';
+        }
+    }
+
     // ---- Étiquettes permanentes : merges + tags — les "story beats" du
-    // repo. Pool borné : les ~24 plus proches de la caméra, jamais plus.
+    // repo. Quota réel adapté à la hauteur du viewport : en zoom arrière
+    // on montre moins d'étiquettes, pas un mur de texte.
     const NL_MAX = 24;
     let labelsOn = false;
     const nlDivs: HTMLDivElement[] = [];
@@ -789,42 +975,44 @@ export function renderGraph(container: HTMLElement, graph: any, opts: any) {
     const labeled = graph.nodes.filter(
         (n: any) => (n.parents?.length ?? 0) >= 2 || (n.tags && n.tags.length)
     );
-    function updateNodeLabels() {
-        if (!labelsOn) {
-            for (const el of nlDivs) if (el.style.display !== 'none') el.style.display = 'none';
-            return;
-        }
-        const rect = renderer.domElement.getBoundingClientRect();
-        const cands: { n: any; x: number; y: number; z: number }[] = [];
-        for (const n of labeled) {
-            if (!nodeVisible(n) || replayK(n) <= 0) continue;
-            _tipProj.set(n.x, n.y, n.z).project(camera);
-            if (_tipProj.z > 1) continue;
-            const x = (_tipProj.x * 0.5 + 0.5) * rect.width;
-            const y = (-_tipProj.y * 0.5 + 0.5) * rect.height;
-            if (x < -40 || x > rect.width + 40 || y < -20 || y > rect.height + 20) continue;
-            cands.push({ n, x, y, z: _tipProj.z });
-        }
-        cands.sort((pa, pb) => pa.z - pb.z);
-        for (let i = 0; i < NL_MAX; i++) {
-            const el = nlDivs[i];
-            const c = cands[i];
-            if (!c) {
-                if (el.style.display !== 'none') el.style.display = 'none';
-                continue;
+    function collectNodeLabels(rect: DOMRect, out: Cand[]) {
+        let used = 0;
+        if (labelsOn) {
+            const quota = Math.min(NL_MAX, Math.max(4, Math.floor(rect.height / 26)));
+            const cands: { n: any; x: number; y: number; z: number }[] = [];
+            for (const n of labeled) {
+                if (!nodeVisible(n) || replayK(n) <= 0) continue;
+                const p = projectXY(n, rect);
+                if (!p) continue;
+                if (
+                    p.x < rect.left - 40 || p.x > rect.left + rect.width + 40 ||
+                    p.y < rect.top - 20 || p.y > rect.top + rect.height + 20
+                ) continue;
+                cands.push({ n, x: p.x, y: p.y, z: p.z });
             }
-            const txt = c.n.tags?.length ? `⚐ ${c.n.tags[0]}` : `◆ ${c.n.short}`;
-            if (el.textContent !== txt) el.textContent = txt;
-            el.style.display = 'block';
-            el.style.left = rect.left + c.x + 10 + 'px';
-            el.style.top = rect.top + c.y - 22 + 'px';
+            cands.sort((pa, pb) => pa.z - pb.z);
+            used = Math.min(quota, cands.length);
+            for (let i = 0; i < used; i++) {
+                const c = cands[i];
+                const el = nlDivs[i];
+                out.push({
+                    pri: 2, z: c.z, x: c.x + 10, y: c.y - 22, w: 96, h: 18, el,
+                    fill: () => {
+                        const txt = c.n.tags?.length ? `⚐ ${c.n.tags[0]}` : `◆ ${c.n.short}`;
+                        if (el.textContent !== txt) el.textContent = txt;
+                    },
+                });
+            }
+        }
+        for (let i = used; i < NL_MAX; i++) {
+            if (nlDivs[i].style.display !== 'none') nlDivs[i].style.display = 'none';
         }
     }
 
     // ---- Étiquettes de tips de branches : le DERNIER commit de chaque
     // branche, étiqueté nom + hash + sujet — les repères du graphe. On par
-    // défaut (toggle "tips" de la barre), bornées aux ~32 plus proches de
-    // la caméra. Plusieurs branches sur le même tip se décalent en pile.
+    // défaut (toggle "tips" de la barre) ; quota adapté au viewport, les
+    // collisions sont résolues par le placer commun (pile verticale).
     const TL_MAX = 32;
     let tipLabelsOn = true;
     const tipEntries: { br: any; n: any; css: string }[] = [];
@@ -849,60 +1037,58 @@ export function renderGraph(container: HTMLElement, graph: any, opts: any) {
         document.body.appendChild(el);
         tlDivs.push({ el, nm, sb, text: '' });
     }
-    function updateTipLabels() {
-        if (!tipLabelsOn) {
-            for (const d of tlDivs) if (d.el.style.display !== 'none') d.el.style.display = 'none';
-            return;
-        }
-        const rect = renderer.domElement.getBoundingClientRect();
-        const tlc: { e: any; x: number; y: number; z: number }[] = [];
-        for (const e of tipEntries) {
-            const n = e.n;
-            if (lastBranchSet && !lastBranchSet.has(e.br.id)) continue;
-            if (lastAuthorSet && !lastAuthorSet.has(n.author)) continue;
-            if (replayK(n) <= 0) continue; // pas encore révélé par le film
-            _tipProj.set(n.x, n.y, n.z).project(camera);
-            if (_tipProj.z > 1) continue; // derrière la caméra
-            const x = (_tipProj.x * 0.5 + 0.5) * rect.width;
-            const y = (-_tipProj.y * 0.5 + 0.5) * rect.height;
-            if (x < -60 || x > rect.width + 60 || y < -30 || y > rect.height + 30) continue;
-            tlc.push({ e, x, y, z: _tipProj.z });
-        }
-        tlc.sort((pa, pb) => pa.z - pb.z);
-        const stacked = new Map<string, number>();
-        for (let i = 0; i < tlDivs.length; i++) {
-            const d = tlDivs[i];
-            const c = tlc[i];
-            if (!c) {
-                if (d.el.style.display !== 'none') d.el.style.display = 'none';
-                continue;
+    function collectTipLabels(rect: DOMRect, out: Cand[]) {
+        let used = 0;
+        if (tipLabelsOn) {
+            const quota = Math.min(TL_MAX, Math.max(6, Math.floor(rect.height / 28)));
+            const tlc: { e: any; x: number; y: number; z: number }[] = [];
+            for (const e of tipEntries) {
+                const n = e.n;
+                if (lastBranchSet && !lastBranchSet.has(e.br.id)) continue;
+                if (lastAuthorSet && !lastAuthorSet.has(n.author)) continue;
+                if (replayK(n) <= 0) continue; // pas encore révélé par le film
+                const p = projectXY(n, rect);
+                if (!p) continue; // derrière la caméra
+                if (
+                    p.x < rect.left - 60 || p.x > rect.left + rect.width + 60 ||
+                    p.y < rect.top - 30 || p.y > rect.top + rect.height + 30
+                ) continue;
+                tlc.push({ e, x: p.x, y: p.y, z: p.z });
             }
-            const row = stacked.get(c.e.n.id) || 0;
-            stacked.set(c.e.n.id, row + 1);
-            const txt = `⎇ ${c.e.br.name}|${c.e.n.short} · ${c.e.n.subject}`;
-            if (d.text !== txt) {
-                d.text = txt;
-                const cut = txt.indexOf('|');
-                d.nm.textContent = txt.slice(0, cut);
-                d.sb.textContent = txt.slice(cut + 1);
-                d.nm.style.color = c.e.css;
-                d.el.style.borderLeftColor = c.e.css;
+            tlc.sort((pa, pb) => pa.z - pb.z);
+            used = Math.min(quota, tlDivs.length, tlc.length);
+            for (let i = 0; i < used; i++) {
+                const c = tlc[i];
+                const d = tlDivs[i];
+                out.push({
+                    pri: 1, z: c.z, x: c.x + 12, y: c.y - 14, w: 190, h: 32, el: d.el,
+                    fill: () => {
+                        const txt = `⎇ ${c.e.br.name}|${c.e.n.short} · ${c.e.n.subject}`;
+                        if (d.text !== txt) {
+                            d.text = txt;
+                            const cut = txt.indexOf('|');
+                            d.nm.textContent = txt.slice(0, cut);
+                            d.sb.textContent = txt.slice(cut + 1);
+                            d.nm.style.color = c.e.css;
+                            d.el.style.borderLeftColor = c.e.css;
+                        }
+                    },
+                });
             }
-            d.el.style.display = 'block';
-            d.el.style.left = rect.left + c.x + 12 + 'px';
-            d.el.style.top = rect.top + c.y - 14 + row * 32 + 'px';
+        }
+        for (let i = used; i < tlDivs.length; i++) {
+            if (tlDivs[i].el.style.display !== 'none') tlDivs[i].el.style.display = 'none';
         }
     }
 
     let lastFrontIdx = -1;
     let mtipCursor = -1;
-    const _tipProj = new THREE.Vector3();
     function updateMovieTip() {
-        updateNodeLabels(); // labels permanentes merges/tags (si activées)
-        updateTipLabels(); // cartes de tips de branches (derniers commits)
         const now = performance.now();
-        // Tag du commit présenté (dwell) — toujours affiché tant qu'il est
-        // devant la caméra ; texte mis à jour seulement au changement de nœud.
+        const rect = renderer.domElement.getBoundingClientRect();
+        const cands: Cand[] = [];
+        // Tag du commit présenté (dwell) — priorité max : c'est lui qu'on
+        // est censé lire, il prend sa place dans la pile de collision.
         if (movieLive && presentNode) {
             // Halo pulsant sur le nœud présenté — on sait quelle sphère lire
             const pshape = nodeShapeOf(presentNode);
@@ -914,19 +1100,19 @@ export function renderGraph(container: HTMLElement, graph: any, opts: any) {
             hoverGlow.position.set(presentNode.x, presentNode.y, presentNode.z);
             hoverGlow.visible = true;
             movieGlow = true;
-            _tipProj.set(presentNode.x, presentNode.y, presentNode.z).project(camera);
-            if (_tipProj.z <= 1) {
+            const p = projectXY(presentNode, rect);
+            if (p) {
                 if (presentShown !== presentNode) {
                     presentShown = presentNode;
                     fillCard(presentCard, presentNode);
                     presentCard.t.textContent = '▸ ' + presentCard.t.textContent;
                 }
-                const rect = renderer.domElement.getBoundingClientRect();
-                const x = rect.left + (_tipProj.x * 0.5 + 0.5) * rect.width;
-                const y = rect.top + (-_tipProj.y * 0.5 + 0.5) * rect.height;
-                presentEl.style.display = 'block';
-                presentEl.style.left = Math.min(Math.max(x + 16, 6), Math.max(rect.width - 400, 6)) + 'px';
-                presentEl.style.top = Math.min(Math.max(y - 48, 6), Math.max(rect.height - 56, 6)) + 'px';
+                cands.push({
+                    pri: 0, z: p.z,
+                    x: Math.min(Math.max(p.x + 16, 6), Math.max(rect.left + rect.width - 400, 6)),
+                    y: Math.min(Math.max(p.y - 48, 6), Math.max(rect.top + rect.height - 56, 6)),
+                    w: 300, h: 50, el: presentEl,
+                });
             } else {
                 presentEl.style.display = 'none';
             }
@@ -938,6 +1124,8 @@ export function renderGraph(container: HTMLElement, graph: any, opts: any) {
                 movieGlow = false;
             }
         }
+        collectTipLabels(rect, cands); // cartes de tips de branches
+        collectNodeLabels(rect, cands); // merges/tags permanents
         if (!movieLive || frontIdx < 0) {
             if (lastFrontIdx >= 0) {
                 for (const s of mtipPool) {
@@ -946,53 +1134,56 @@ export function renderGraph(container: HTMLElement, graph: any, opts: any) {
                 }
                 lastFrontIdx = -1;
             }
-            return;
-        }
-        if (frontIdx < lastFrontIdx) {
-            // retour en arrière / redémarrage : purge — un tag sur un nœud
-            // pas encore révélé flotterait sur du vide
+        } else {
+            if (frontIdx < lastFrontIdx) {
+                // retour en arrière / redémarrage : purge — un tag sur un
+                // nœud pas encore révélé flotterait sur du vide
+                for (const s of mtipPool) {
+                    s.node = null;
+                    s.el.style.display = 'none';
+                }
+                lastFrontIdx = -1;
+            }
+            // Un tag par nœud nouvellement révélé depuis la frame
+            // précédente — le présenté porte déjà son tag dédié.
+            for (let i = lastFrontIdx + 1; i <= frontIdx; i++) {
+                if (sortedByKey[i] === presentNode) continue;
+                const slot = mtipPool[(++mtipCursor) % MTIP_MAX];
+                slot.node = sortedByKey[i];
+                slot.born = now;
+                const glyph = { merge: '◆', root: '▲', uncommitted: '■', stash: '▶', empty: '◇' }[nodeShapeOf(slot.node)] || '●';
+                const d = slot.node.date ? new Date(slot.node.date) : null;
+                const dateTxt = d && !isNaN(d.getTime())
+                    ? ' · ' + d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })
+                    : '';
+                slot.el.textContent = `${glyph} ${slot.node.short} ${slot.node.subject} — ${slot.node.author}${dateTxt}`;
+            }
+            lastFrontIdx = frontIdx;
             for (const s of mtipPool) {
-                s.node = null;
-                s.el.style.display = 'none';
+                if (!s.node) continue;
+                const age = now - s.born;
+                if (age > MTIP_LIFE) {
+                    s.node = null;
+                    s.el.style.display = 'none';
+                    continue;
+                }
+                const p = projectXY(s.node, rect);
+                if (!p) {
+                    s.el.style.display = 'none'; // derrière la caméra
+                    continue;
+                }
+                cands.push({
+                    pri: 3, z: p.z,
+                    x: Math.min(Math.max(p.x + 12, 6), Math.max(rect.left + rect.width - 270, 6)),
+                    y: Math.min(Math.max(p.y - 8, 6), Math.max(rect.top + rect.height - 30, 6)),
+                    w: 200, h: 20, el: s.el,
+                    fill: () => {
+                        s.el.style.opacity = age > MTIP_LIFE - 800 ? String((MTIP_LIFE - age) / 800) : '1';
+                    },
+                });
             }
-            lastFrontIdx = -1;
         }
-        // Un tag par nœud nouvellement révélé depuis la frame précédente —
-        // le commit présenté porte déjà son tag dédié, pas de doublon.
-        for (let i = lastFrontIdx + 1; i <= frontIdx; i++) {
-            if (sortedByKey[i] === presentNode) continue;
-            const slot = mtipPool[(++mtipCursor) % MTIP_MAX];
-            slot.node = sortedByKey[i];
-            slot.born = now;
-            const glyph = { merge: '◆', root: '▲', uncommitted: '■', stash: '▶', empty: '◇' }[nodeShapeOf(slot.node)] || '●';
-            const d = slot.node.date ? new Date(slot.node.date) : null;
-            const dateTxt = d && !isNaN(d.getTime())
-                ? ' · ' + d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })
-                : '';
-            slot.el.textContent = `${glyph} ${slot.node.short} ${slot.node.subject} — ${slot.node.author}${dateTxt}`;
-        }
-        lastFrontIdx = frontIdx;
-        const rect = renderer.domElement.getBoundingClientRect();
-        for (const s of mtipPool) {
-            if (!s.node) continue;
-            const age = now - s.born;
-            if (age > MTIP_LIFE) {
-                s.node = null;
-                s.el.style.display = 'none';
-                continue;
-            }
-            _tipProj.set(s.node.x, s.node.y, s.node.z).project(camera);
-            if (_tipProj.z > 1) {
-                s.el.style.display = 'none'; // derrière la caméra
-                continue;
-            }
-            const x = rect.left + (_tipProj.x * 0.5 + 0.5) * rect.width;
-            const y = rect.top + (-_tipProj.y * 0.5 + 0.5) * rect.height;
-            s.el.style.opacity = age > MTIP_LIFE - 800 ? String((MTIP_LIFE - age) / 800) : '1';
-            s.el.style.display = 'block';
-            s.el.style.left = Math.min(Math.max(x + 12, 6), Math.max(rect.width - 270, 6)) + 'px';
-            s.el.style.top = Math.min(Math.max(y - 8, 6), Math.max(rect.height - 30, 6)) + 'px';
-        }
+        placeLabels(cands, rect);
     }
 
     // ---- node/edge filter + re-tint helper ----
@@ -1007,6 +1198,15 @@ export function renderGraph(container: HTMLElement, graph: any, opts: any) {
     const nodeVisible = (n: any) =>
         (!lastBranchSet || lastBranchSet.has(n.branch)) &&
         (!lastAuthorSet || lastAuthorSet.has(n.author));
+    // Zoom sémantique : de loin, seuls les "story beats" (merges, tips,
+    // tags) restent visibles — le détail réapparaît en zoomant. Seuil
+    // généreux + hystérésis : le cadrage initial n'active pas le mode,
+    // il faut un vrai zoom arrière.
+    let summaryZoomOn = true;
+    let summaryActive = false;
+    const summaryWorth = (n: any) =>
+        (n.parents?.length ?? 0) >= 2 || !!n.isTip || !!(n.tags && n.tags.length);
+    const summaryPass = (n: any) => !summaryActive || summaryWorth(n);
     function applyEdgeFilter() {
         // Hide commit spheres on filtered-out nodes (scale-0 instances) ;
         // replayP < 1 : les nœuds pas encore "lus" grandissent de 0 → plein.
@@ -1015,7 +1215,7 @@ export function renderGraph(container: HTMLElement, graph: any, opts: any) {
             for (let j = 0; j < idxs.length; j++) {
                 const n = graph.nodes[idxs[j]];
                 const rv = replayK(n);
-                const s = nodeVisible(n) ? nodeScale * rv * churnScale(n) : 0;
+                const s = nodeVisible(n) && summaryPass(n) ? nodeScale * rv * churnScale(n) : 0;
                 m4.compose(NV.set(n.x, n.y, n.z), IDQ, SCL.set(s, s, s));
                 sm.setMatrixAt(j, m4);
             }
@@ -1027,7 +1227,7 @@ export function renderGraph(container: HTMLElement, graph: any, opts: any) {
             if (vi >= nEdges) break;
             const s = nodeById.get(e.source);
             const t = nodeById.get(e.target);
-            if (!s || !t || !nodeVisible(s) || !nodeVisible(t)) continue;
+            if (!s || !t || !nodeVisible(s) || !nodeVisible(t) || !summaryPass(s) || !summaryPass(t)) continue;
             if (Math.max(s._tk ?? 0, t._tk ?? 0) > replayP) continue; // arête révélée quand ses 2 bouts le sont
             a.set(s.x, s.y, s.z);
             b.set(t.x, t.y, t.z);
@@ -1037,7 +1237,8 @@ export function renderGraph(container: HTMLElement, graph: any, opts: any) {
             lenCnt++;
             mid.addVectors(a, b).multiplyScalar(0.5);
             q.setFromUnitVectors(up, dir.clone().normalize());
-            m.compose(mid, q, new THREE.Vector3(edgeW(s), len, edgeW(s)));
+            const w = edgeW(s) * (len > LONG_EDGE ? 0.55 : 1);
+            m.compose(mid, q, new THREE.Vector3(w, len, w));
             edgesVisible.setMatrixAt(vi, m);
             edgesVisible.setColorAt(vi, nodeColorOf(s));
             vi++;
@@ -1157,6 +1358,79 @@ export function renderGraph(container: HTMLElement, graph: any, opts: any) {
         syncFxRes();
     }
 
+    // ---- mini-carte : le graphe "déroulé" (temps × lane) en vue 2D avec
+    // la position de la caméra — repère d'orientation permanent, on sait
+    // toujours où on regarde dans le graphe.
+    const mini = document.createElement('canvas');
+    mini.width = 200;
+    mini.height = 140;
+    mini.style.cssText =
+        'position:fixed;right:10px;bottom:56px;z-index:8;opacity:.85;pointer-events:none;' +
+        'border:1px solid var(--border);border-radius:6px;background:var(--overlay);';
+    document.body.appendChild(mini);
+    const miniCtx = mini.getContext('2d')!;
+    const mmHoriz = graph.axis?.orient === 'x';
+    const mmCyl = graph.nodes.some((n: any) => (n.radius ?? 0) > 1);
+    // u = temps (coordonnées de base), v = lane (arc cylindrique ou axe orthogonal)
+    const mmUVN = (n: any) => ({
+        u: mmHoriz ? n.bx : n.by,
+        v: mmCyl ? n.angle * n.radius : mmHoriz ? n.by : n.bx,
+    });
+    const mmUVC = (p: THREE.Vector3) => ({
+        u: (mmHoriz ? p.x : p.y) / spacing,
+        v: mmCyl ? Math.atan2(p.z, p.x) * Math.hypot(p.x, p.z) : mmHoriz ? p.y : p.x,
+    });
+    const mm = { u0: Infinity, u1: -Infinity, v0: Infinity, v1: -Infinity };
+    for (const n of graph.nodes) {
+        const { u, v } = mmUVN(n);
+        if (u < mm.u0) mm.u0 = u;
+        if (u > mm.u1) mm.u1 = u;
+        if (v < mm.v0) mm.v0 = v;
+        if (v > mm.v1) mm.v1 = v;
+    }
+    const cssCache = new Map<string, string>();
+    const cssOf = (bid: string) => {
+        let c = cssCache.get(bid);
+        if (!c) {
+            c = '#' + colorOf(bid).toString(16).padStart(6, '0');
+            cssCache.set(bid, c);
+        }
+        return c;
+    };
+    let miniLast = 0;
+    function drawMini(t: number) {
+        if (t - miniLast < 150) return; // ~7 fps — suffit pour s'orienter
+        miniLast = t;
+        const w = mini.width, h = mini.height, pad = 7;
+        const us = mm.u1 - mm.u0 || 1, vs = mm.v1 - mm.v0 || 1;
+        const px = (u: number) => pad + ((u - mm.u0) / us) * (w - 2 * pad);
+        const py = (v: number) => pad + ((v - mm.v0) / vs) * (h - 2 * pad);
+        miniCtx.clearRect(0, 0, w, h);
+        const step = Math.max(1, Math.floor(graph.nodes.length / 15000));
+        for (let i = 0; i < graph.nodes.length; i += step) {
+            const n = graph.nodes[i];
+            if (!nodeVisible(n) || replayK(n) <= 0) continue;
+            const { u, v } = mmUVN(n);
+            miniCtx.fillStyle = cssOf(n.branch);
+            miniCtx.fillRect(px(u) - 1, py(v) - 1, 2, 2);
+        }
+        // caméra → cible : où on regarde dans le graphe
+        const cp = mmUVC(camera.position);
+        const tp = mmUVC(controls.target);
+        miniCtx.strokeStyle = 'rgba(255,255,255,.6)';
+        miniCtx.beginPath();
+        miniCtx.moveTo(px(cp.u), py(cp.v));
+        miniCtx.lineTo(px(tp.u), py(tp.v));
+        miniCtx.stroke();
+        miniCtx.beginPath();
+        miniCtx.arc(px(cp.u), py(cp.v), 4, 0, 7);
+        miniCtx.stroke();
+        miniCtx.fillStyle = '#fff';
+        miniCtx.beginPath();
+        miniCtx.arc(px(tp.u), py(tp.v), 2.5, 0, 7);
+        miniCtx.fill();
+    }
+
     // ---- animation loop ----
     let animationId: number;
     function animate() {
@@ -1188,6 +1462,27 @@ export function renderGraph(container: HTMLElement, graph: any, opts: any) {
                 camera.position.sub(controls.target).multiplyScalar(nd / d).add(controls.target);
             }
         }
+        if (flatK !== flatTarget) {
+            // Transition 3D ↔ plan : ~25 frames, lerp amorti
+            flatK += (flatTarget - flatK) * 0.16;
+            if (Math.abs(flatTarget - flatK) < 0.004) flatK = flatTarget;
+            applyPositions();
+        }
+        laneGroup.visible = flatK < 0.5; // les guides 3D ne suivent pas le déroulage
+        if (summaryZoomOn) {
+            // Seuil relatif à l'envergure réelle du graphe (spacing inclus)
+            const dCam = camera.position.distanceTo(controls.target);
+            const span = maxDim * (spacing / initSpacing);
+            const want = summaryActive ? dCam > span * 1.3 : dCam > span * 1.5;
+            if (want !== summaryActive) {
+                summaryActive = want;
+                applyEdgeFilter();
+            }
+        } else if (summaryActive) {
+            summaryActive = false;
+            applyEdgeFilter();
+        }
+        drawMini(performance.now());
         if (!camAnim.active) controls.update();
         const t = performance.now() * 0.001;
         if (highlightMesh) {
@@ -1230,6 +1525,8 @@ export function renderGraph(container: HTMLElement, graph: any, opts: any) {
             (labelRenderer as any).dispose?.();
             tooltipDiv.remove();
             presentEl.remove();
+            mini.remove();
+            if (pathTimer) clearTimeout(pathTimer);
             for (const d of mtipDivs) d.remove();
             for (const d of nlDivs) d.remove();
             for (const d of tlDivs) d.el.remove();
@@ -1320,19 +1617,15 @@ export function renderGraph(container: HTMLElement, graph: any, opts: any) {
             spacing = v;
             // Espacement ENTRE commits : on étire uniquement l'axe du temps
             // (y, ou x en vue chronological) — les positions des branches en
-            // xz ne bougent pas, l'environnement ne gonfle pas.
+            // xz ne bougent pas, l'environnement ne gonfle pas. applyPositions
+            // conserve aussi l'état "flat" (déroulé) du graphe.
             const horiz = graph.axis?.orient === 'x';
-            for (const n of graph.nodes) {
-                n.x = horiz ? n.bx * v : n.bx;
-                n.y = horiz ? n.by : n.by * v;
-                n.z = n.bz;
-            }
-            applyEdgeFilter(); // rebuild nœuds + arêtes visibles
-            rebuildSegs(); // tips + liens similaires
+            applyPositions();
             // L'axe est construit sur les positions à initSpacing → échelle
             // relative v/initSpacing (évite un double étirement au 1er load)
             const av = v / initSpacing;
             if (axisGroup) axisGroup.scale.set(horiz ? av : 1, horiz ? 1 : av, 1);
+            laneGroup.scale.set(horiz ? av : 1, horiz ? 1 : av, 1);
             (scene.fog as THREE.Fog).near = spacingBaseDim * theme.fog[0] * v;
             (scene.fog as THREE.Fog).far = spacingBaseDim * theme.fog[1] * v;
             rim.distance = spacingBaseDim * 6 * v;
@@ -1348,12 +1641,6 @@ export function renderGraph(container: HTMLElement, graph: any, opts: any) {
                     controls.target.y *= k;
                     camera.position.y += d;
                 }
-            }
-            if (highlightMesh && selectedNode) {
-                highlightMesh.position.set(selectedNode.x, selectedNode.y, selectedNode.z);
-            }
-            if (hoverGlow.visible && hoverNode) {
-                hoverGlow.position.set(hoverNode.x, hoverNode.y, hoverNode.z);
             }
         },
         /**
@@ -1438,7 +1725,8 @@ export function renderGraph(container: HTMLElement, graph: any, opts: any) {
                 const len = dir.length() || 0.001;
                 mid.addVectors(a, b).multiplyScalar(0.5);
                 q.setFromUnitVectors(up, dir.clone().normalize());
-                m.compose(mid, q, new THREE.Vector3(edgeW(s), len, edgeW(s)));
+                const w = edgeW(s) * (len > LONG_EDGE ? 0.55 : 1);
+                m.compose(mid, q, new THREE.Vector3(w, len, w));
                 edgesVisible.setMatrixAt(vi, m);
                 edgesVisible.setColorAt(vi, nodeColorOf(s));
                 vi++;
@@ -1467,6 +1755,13 @@ export function renderGraph(container: HTMLElement, graph: any, opts: any) {
         setTipLabelsVisible(on: boolean) {
             tipLabelsOn = !!on;
             if (!tipLabelsOn) for (const d of tlDivs) d.el.style.display = 'none';
+        },
+        setFlat(on: boolean) {
+            flatTarget = on ? 1 : 0;
+            if (on) api.fitView('front'); // regarder le plan en face
+        },
+        setSummaryZoom(on: boolean) {
+            summaryZoomOn = !!on;
         },
     };
     return api;
