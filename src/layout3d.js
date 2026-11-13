@@ -63,15 +63,8 @@ export function layoutGraph(
 
     // y axis: prefer the REAL commit DATE so the vertical axis is a true,
     // monotonic timeline. Fall back to topological depth when dates are absent.
-    const times = graph.nodes.map(n => Date.parse(n.date)).filter(t => Number.isFinite(t));
-    let tMin = Infinity,
-        tMax = -Infinity;
-    for (const t of times) {
-        if (t < tMin) tMin = t;
-        if (t > tMax) tMax = t;
-    }
-    const useTime = times.length === graph.nodes.length && tMax > tMin;
-    graph.axis = { mode: useTime ? 'time' : 'depth', tMin, tMax };
+    const tr = timeRange(graph);
+    graph.axis = axisOf(tr);
 
     for (const n of graph.nodes) {
         const p = posOf.get(n.branch) || { angle: 0, radius: radiusMinor };
@@ -84,11 +77,7 @@ export function layoutGraph(
         n.x = Math.cos(angle) * radius;
         n.z = Math.sin(angle) * radius;
         // history grows upward: oldest at the bottom, newest at the top
-        if (useTime) {
-            n.y = ((Date.parse(n.date) - tMin) / (tMax - tMin) - 0.5) * height;
-        } else {
-            n.y = (n.depth / maxDepth - 0.5) * height;
-        }
+        n.y = timePos(n, tr, maxDepth, height);
         // Synthetic tip nodes (stash/empty-branch): offset slightly so they
         // don't overlap with the commit they point to.
         if (n.isTip) {
@@ -113,29 +102,92 @@ function hash01(str) {
     return ((h >>> 0) % 100000) / 100000;
 }
 
+// Shared commit-time scale. Two properties:
+//  - tolerates a few undated nodes (e.g. synthetic tips): time mode only
+//    needs a majority of dated nodes; undated nodes fall back to depth.
+//  - gap compression: dead zones (silence gaps between bursts of activity)
+//    are capped so history doesn't stretch over huge empty spans. The scale
+//    stays monotonic and proportional inside the gaps it keeps.
+// tr.ts / tr.vs are the (real time -> visual time) breakpoints, also stored on
+// graph.axis so the renderer's date ticks follow the same compressed scale.
+function timeRange(graph) {
+    const times = [];
+    for (const n of graph.nodes) {
+        const t = Date.parse(n.date);
+        if (Number.isFinite(t)) times.push(t);
+    }
+    if (!times.length) return { tMin: Infinity, tMax: -Infinity, useTime: false, ts: [], vs: [], t2v: null, vMax: 0 };
+    const ts = [...new Set(times)].sort((a, b) => a - b);
+    const tMin = ts[0],
+        tMax = ts[ts.length - 1];
+    const span = tMax - tMin;
+
+    // gaps wider than ~4% of the total span are dead zones: compress them.
+    const maxGap = Math.max(span / 24, 1);
+    const vs = [0];
+    for (let i = 1; i < ts.length; i++) vs.push(vs[i - 1] + Math.min(ts[i] - ts[i - 1], maxGap));
+    const vMax = vs[vs.length - 1];
+
+    // real time -> compressed visual time (binary search + interpolation)
+    const t2v = (t) => {
+        if (t <= ts[0]) return vs[0];
+        if (t >= ts[ts.length - 1]) return vMax;
+        let lo = 0,
+            hi = ts.length - 1;
+        while (hi - lo > 1) {
+            const mid = (lo + hi) >> 1;
+            if (ts[mid] <= t) lo = mid;
+            else hi = mid;
+        }
+        const f = (t - ts[lo]) / (ts[hi] - ts[lo]);
+        return vs[lo] + (vs[hi] - vs[lo]) * f;
+    };
+
+    const useTime = times.length > graph.nodes.length / 2 && vMax > 0;
+    return { tMin, tMax, useTime, ts, vs, t2v, vMax };
+}
+
+// axis descriptor shared by all views; carries the compressed scale so the
+// renderer can place date ticks consistently with node positions.
+function axisOf(tr, orient) {
+    const axis = { mode: tr.useTime ? 'time' : 'depth', tMin: tr.tMin, tMax: tr.tMax };
+    if (orient) axis.orient = orient;
+    if (tr.useTime) {
+        axis.times = tr.ts;
+        axis.vtimes = tr.vs;
+    }
+    return axis;
+}
+
+// y/x position of a node on the time axis, with per-node depth fallback.
+function timePos(n, tr, maxDepth, extent) {
+    const t = Date.parse(n.date);
+    if (tr.useTime && Number.isFinite(t)) return (tr.t2v(t) / tr.vMax - 0.5) * extent;
+    return (n.depth / maxDepth - 0.5) * extent;
+}
+
 // ── View: chronological (linear timeline) ─────────────────────────────────
 function layoutChronological(graph, { height = 300, width = 800 } = {}) {
-    const times = graph.nodes.map(n => Date.parse(n.date)).filter(Number.isFinite);
-    let tMin = Infinity,
-        tMax = -Infinity;
-    for (const t of times) {
-        if (t < tMin) tMin = t;
-        if (t > tMax) tMax = t;
-    }
-    const useTime = times.length === graph.nodes.length && tMax > tMin;
-    graph.axis = { mode: useTime ? 'time' : 'depth', tMin, tMax };
+    const tr = timeRange(graph);
+    graph.axis = axisOf(tr, 'x');
     const maxDepth = graph.nodes.reduce((m, n) => Math.max(m, n.depth), 0) || 1;
     for (const n of graph.nodes) {
         const h1 = hash01(n.id);
         const h2 = hash01(n.id + '#r');
-        if (useTime) {
-            n.x = ((Date.parse(n.date) - tMin) / (tMax - tMin) - 0.5) * width;
+        if (tr.useTime) {
+            n.x = timePos(n, tr, maxDepth, width);
             n.y = (n.depth / maxDepth - 0.5) * height;
         } else {
             n.x = (n.depth / maxDepth - 0.5) * width;
             n.y = (h1 - 0.5) * height;
         }
         n.z = (h2 - 0.5) * 40;
+        // tips sit exactly on their target commit (same date+depth) — nudge
+        // them forward so they stay visible instead of being a hidden twin.
+        if (n.isTip) {
+            n.z += 14;
+            n.y += 6;
+        }
         n.angle = 0;
         n.radius = 0;
         n.lane = 0;
@@ -145,7 +197,12 @@ function layoutChronological(graph, { height = 300, width = 800 } = {}) {
 
 // ── View: author (cylindrical, grouped by author) ─────────────────────────
 function layoutAuthor(graph, { height = 300, radiusMajor = 100, radiusMinor = 250, prominentCount = 36 } = {}) {
-    const authors = [...new Set(graph.nodes.map(n => n.author))].sort();
+    // prominence = commit count, not alphabetical order
+    const commitsOf = new Map();
+    for (const n of graph.nodes) commitsOf.set(n.author, (commitsOf.get(n.author) || 0) + 1);
+    const authors = [...commitsOf.keys()].sort(
+        (a, b) => commitsOf.get(b) - commitsOf.get(a) || a.localeCompare(b)
+    );
     const nAuthors = authors.length || 1;
     const nProminent = Math.min(prominentCount, nAuthors);
     const GOLDEN = Math.PI * (3 - Math.sqrt(5));
@@ -162,15 +219,8 @@ function layoutAuthor(graph, { height = 300, radiusMajor = 100, radiusMinor = 25
         }
         posOf.set(a, { angle, radius });
     });
-    const times = graph.nodes.map(n => Date.parse(n.date)).filter(Number.isFinite);
-    let tMin = Infinity,
-        tMax = -Infinity;
-    for (const t of times) {
-        if (t < tMin) tMin = t;
-        if (t > tMax) tMax = t;
-    }
-    const useTime = times.length === graph.nodes.length && tMax > tMin;
-    graph.axis = { mode: useTime ? 'time' : 'depth', tMin, tMax };
+    const tr = timeRange(graph);
+    graph.axis = axisOf(tr);
     const maxDepth = graph.nodes.reduce((m, n) => Math.max(m, n.depth), 0) || 1;
     for (const n of graph.nodes) {
         const p = posOf.get(n.author) || { angle: 0, radius: radiusMinor };
@@ -182,10 +232,11 @@ function layoutAuthor(graph, { height = 300, radiusMajor = 100, radiusMinor = 25
         n.radius = radius;
         n.x = Math.cos(angle) * radius;
         n.z = Math.sin(angle) * radius;
-        if (useTime) {
-            n.y = ((Date.parse(n.date) - tMin) / (tMax - tMin) - 0.5) * height;
-        } else {
-            n.y = (n.depth / maxDepth - 0.5) * height;
+        n.y = timePos(n, tr, maxDepth, height);
+        if (n.isTip) {
+            n.x *= 1.1;
+            n.z *= 1.1;
+            n.y += 5;
         }
         n.lane = 0;
     }
@@ -193,30 +244,27 @@ function layoutAuthor(graph, { height = 300, radiusMajor = 100, radiusMinor = 25
 }
 
 // ── View: radial (concentric circles by date) ─────────────────────────────
-function layoutRadial(graph, { height = 300, radiusStep = 30 } = {}) {
-    const times = graph.nodes.map(n => Date.parse(n.date)).filter(Number.isFinite);
-    let tMin = Infinity,
-        tMax = -Infinity;
-    for (const t of times) {
-        if (t < tMin) tMin = t;
-        if (t > tMax) tMax = t;
-    }
-    const useTime = times.length === graph.nodes.length && tMax > tMin;
-    graph.axis = { mode: useTime ? 'time' : 'depth', tMin, tMax };
+function layoutRadial(graph, { height = 300, radiusStep = 30, maxRadius = 380 } = {}) {
+    const tr = timeRange(graph);
+    graph.axis = axisOf(tr);
     const maxDepth = graph.nodes.reduce((m, n) => Math.max(m, n.depth), 0) || 1;
     // group nodes by date (day)
     const byDate = new Map();
     for (const n of graph.nodes) {
-        const key = useTime ? new Date(Date.parse(n.date)).toISOString().slice(0, 10) : String(n.depth);
+        const t = Date.parse(n.date);
+        const key = tr.useTime && Number.isFinite(t) ? new Date(t).toISOString().slice(0, 10) : String(n.depth);
         if (!byDate.has(key)) byDate.set(key, []);
         byDate.get(key).push(n);
     }
     const dates = [...byDate.keys()].sort();
     const nRings = dates.length;
+    // keep the disc bounded: compress ring spacing on long histories instead
+    // of letting the radius grow to tens of thousands of units.
+    const step = nRings > 1 ? Math.min(radiusStep, maxRadius / (nRings - 1)) : 0;
     for (let i = 0; i < nRings; i++) {
         const date = dates[i];
         const nodes = byDate.get(date);
-        const radius = 50 + i * radiusStep;
+        const radius = 60 + i * step;
         const angleStep = (Math.PI * 2) / nodes.length;
         nodes.forEach((n, j) => {
             const angle = j * angleStep + hash01(n.id) * 0.5;
@@ -224,10 +272,11 @@ function layoutRadial(graph, { height = 300, radiusStep = 30 } = {}) {
             n.radius = radius;
             n.x = Math.cos(angle) * radius;
             n.z = Math.sin(angle) * radius;
-            if (useTime) {
-                n.y = ((Date.parse(n.date) - tMin) / (tMax - tMin) - 0.5) * height;
-            } else {
-                n.y = (n.depth / maxDepth - 0.5) * height;
+            n.y = timePos(n, tr, maxDepth, height);
+            if (n.isTip) {
+                n.x *= 1.08;
+                n.z *= 1.08;
+                n.y += 5;
             }
             n.lane = 0;
         });
@@ -237,15 +286,8 @@ function layoutRadial(graph, { height = 300, radiusStep = 30 } = {}) {
 
 // ── View: queue (columns like git log --graph) ───────────────────────────
 function layoutQueue(graph, { height = 300, width = 800 } = {}) {
-    const times = graph.nodes.map(n => Date.parse(n.date)).filter(Number.isFinite);
-    let tMin = Infinity,
-        tMax = -Infinity;
-    for (const t of times) {
-        if (t < tMin) tMin = t;
-        if (t > tMax) tMax = t;
-    }
-    const useTime = times.length === graph.nodes.length && tMax > tMin;
-    graph.axis = { mode: useTime ? 'time' : 'depth', tMin, tMax };
+    const tr = timeRange(graph);
+    graph.axis = axisOf(tr);
     const maxDepth = graph.nodes.reduce((m, n) => Math.max(m, n.depth), 0) || 1;
     // assign each branch to a column
     const branches = [...graph.branches].sort((a, b) => b.commits - a.commits);
@@ -253,16 +295,18 @@ function layoutQueue(graph, { height = 300, width = 800 } = {}) {
     branches.forEach((b, i) => colOf.set(b.id, i));
     const nCols = branches.length || 1;
     for (const n of graph.nodes) {
-        const col = colOf.get(n.branch) || 0;
+        const col = colOf.get(n.branch) ?? branches.length - 1;
         const h1 = hash01(n.id);
         const h2 = hash01(n.id + '#r');
-        n.x = (col / nCols - 0.5) * width + (h1 - 0.5) * 10;
-        if (useTime) {
-            n.y = ((Date.parse(n.date) - tMin) / (tMax - tMin) - 0.5) * height;
-        } else {
-            n.y = (n.depth / maxDepth - 0.5) * height;
-        }
+        // columns centered in their slot — (col/nCols - 0.5) left the whole
+        // graph shifted left, worst for 1-2 branches (all nodes at x=-400).
+        n.x = ((col + 0.5) / nCols - 0.5) * width + (h1 - 0.5) * 10;
+        n.y = timePos(n, tr, maxDepth, height);
         n.z = (h2 - 0.5) * 20;
+        if (n.isTip) {
+            n.z += 12;
+            n.y += 5;
+        }
         n.angle = 0;
         n.radius = 0;
         n.lane = col;
@@ -290,15 +334,8 @@ function layoutRealBranches(graph, { height = 300, radiusMajor = 100, radiusMino
         }
         posOf.set(b.id, { angle, radius });
     });
-    const times = graph.nodes.map(n => Date.parse(n.date)).filter(Number.isFinite);
-    let tMin = Infinity,
-        tMax = -Infinity;
-    for (const t of times) {
-        if (t < tMin) tMin = t;
-        if (t > tMax) tMax = t;
-    }
-    const useTime = times.length === graph.nodes.length && tMax > tMin;
-    graph.axis = { mode: useTime ? 'time' : 'depth', tMin, tMax };
+    const tr = timeRange(graph);
+    graph.axis = axisOf(tr);
     const maxDepth = graph.nodes.reduce((m, n) => Math.max(m, n.depth), 0) || 1;
     for (const n of graph.nodes) {
         const p = posOf.get(n.branch) || { angle: 0, radius: radiusMinor };
@@ -310,10 +347,11 @@ function layoutRealBranches(graph, { height = 300, radiusMajor = 100, radiusMino
         n.radius = radius;
         n.x = Math.cos(angle) * radius;
         n.z = Math.sin(angle) * radius;
-        if (useTime) {
-            n.y = ((Date.parse(n.date) - tMin) / (tMax - tMin) - 0.5) * height;
-        } else {
-            n.y = (n.depth / maxDepth - 0.5) * height;
+        n.y = timePos(n, tr, maxDepth, height);
+        if (n.isTip) {
+            n.x *= 1.08;
+            n.z *= 1.08;
+            n.y += 5;
         }
         n.lane = 0;
     }

@@ -40,6 +40,38 @@ function oklabDist(c1, c2) {
 }
 
 /**
+ * Convert sRGB (0..255) to HSL (h: 0..360, s/l: 0..1).
+ */
+function srgbToHsl(r, g, b) {
+    r /= 255; g /= 255; b /= 255;
+    const max = Math.max(r, g, b), min = Math.min(r, g, b);
+    const l = (max + min) / 2;
+    if (max === min) return [0, 0, l];
+    const d = max - min;
+    const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    let h;
+    if (max === r) h = ((g - b) / d + (g < b ? 6 : 0)) * 60;
+    else if (max === g) h = ((b - r) / d + 2) * 60;
+    else h = ((r - g) / d + 4) * 60;
+    return [h, s, l];
+}
+
+/**
+ * Force a color to be "flashy": high saturation, lightness inside a band that
+ * stays readable against the theme background. Keeps the original hue;
+ * near-gray colors (achromatic) get a real hue assigned.
+ */
+function vividHex(hex, dark, fallbackHue = 0) {
+    let [h, s, l] = srgbToHsl((hex >> 16) & 255, (hex >> 8) & 255, hex & 255);
+    if (s < 0.15) h = ((fallbackHue % 360) + 360) % 360;
+    s = Math.max(s, 0.9);
+    l = dark ? Math.min(Math.max(l, 0.58), 0.72)
+             : Math.min(Math.max(l, 0.40), 0.55);
+    const [r, g, b] = hslToSrgb(h, s, l);
+    return (r << 16) | (g << 8) | b;
+}
+
+/**
  * Convert HSL to sRGB (0..255).
  */
 function hslToSrgb(h, s, l) {
@@ -64,42 +96,56 @@ function hslToSrgb(h, s, l) {
  * @param {number} count
  * @returns {number[]}
  */
-export function generateBranchColors(count) {
+export function generateBranchColors(count, { avoidHex = null, seedHexes = [] } = {}) {
     if (count <= 0) return [];
-    if (count === 1) return [0x4f9dff];
+    const dark = avoidHex === null ? true
+        : srgbToOklab((avoidHex >> 16) & 255, (avoidHex >> 8) & 255, avoidHex & 255).L < 0.55;
+    if (count === 1) return [vividHex(0x4f9dff, dark, 210)];
 
-    // Generate a large candidate pool in HSL space
+    // Generate a large candidate pool in HSL space — flashy only: high
+    // saturation, lightness inside the band that pops against the theme
+    // background (bright on dark themes, deeper on light themes).
     const POOL_SIZE = Math.max(2000, count * 50);
     const candidates = [];
     for (let i = 0; i < POOL_SIZE; i++) {
         const hue = (i * 137.508) % 360;
-        const sat = 0.45 + 0.45 * ((i * 7) % 100) / 100; // 0.45..0.90
-        const light = 0.25 + 0.45 * ((i * 13) % 100) / 100; // 0.25..0.70
+        const sat = 0.82 + 0.18 * ((i * 7) % 100) / 100; // 0.82..1.00
+        const light = dark
+            ? 0.55 + 0.25 * ((i * 13) % 100) / 100       // 0.55..0.80
+            : 0.38 + 0.17 * ((i * 13) % 100) / 100;      // 0.38..0.55
         const [r, g, b] = hslToSrgb(hue, sat, light);
         const lab = srgbToOklab(r, g, b);
         candidates.push({ r, g, b, lab, hex: (r << 16) | (g << 8) | b });
     }
 
-    // Farthest-point sampling: greedily pick colors that maximize min distance
+    // Farthest-point sampling: greedily pick colors that maximize min distance.
+    // distLabs is seeded with the background + theme palette so generated
+    // colours stay distinct from both (background = readability, palette =
+    // no near-duplicate of the curated hues already taken by major branches).
     const picked = [];
-    const pickedLabs = [];
+    const distLabs = [];
+    const labOf = (hex) => srgbToOklab((hex >> 16) & 255, (hex >> 8) & 255, hex & 255);
+    if (avoidHex !== null) distLabs.push(labOf(avoidHex));
+    for (const h of seedHexes) distLabs.push(labOf(h));
+    const seedSet = new Set(seedHexes);
 
-    // Start with a mid-blue (good default)
-    const startIdx = candidates.findIndex(c => {
-        const h = c.hex;
-        return h === 0x4f9dff;
-    });
-    const start = startIdx >= 0 ? startIdx : 0;
-    picked.push(candidates[start].hex);
-    pickedLabs.push(candidates[start].lab);
+    // With no seeds, start from a mid-blue-ish candidate for a pleasant default.
+    // With seeds (bg/palette), the loop below picks the first colour by distance
+    // too — avoids always emitting the same dark #5c2323 on dark themes.
+    if (distLabs.length === 0) {
+        const startIdx = candidates.findIndex(c => c.hex === 0x4f9dff);
+        const start = startIdx >= 0 ? startIdx : 0;
+        picked.push(candidates[start].hex);
+        distLabs.push(candidates[start].lab);
+    }
 
     while (picked.length < count) {
         let bestIdx = -1, bestMinDist = -1;
         for (let i = 0; i < candidates.length; i++) {
-            if (picked.includes(candidates[i].hex)) continue;
+            if (picked.includes(candidates[i].hex) || seedSet.has(candidates[i].hex)) continue;
             // min distance to any already-picked color
             let minDist = Infinity;
-            for (const pl of pickedLabs) {
+            for (const pl of distLabs) {
                 const d = oklabDist(candidates[i].lab, pl);
                 if (d < minDist) minDist = d;
             }
@@ -110,7 +156,7 @@ export function generateBranchColors(count) {
         }
         if (bestIdx < 0) break;
         picked.push(candidates[bestIdx].hex);
-        pickedLabs.push(candidates[bestIdx].lab);
+        distLabs.push(candidates[bestIdx].lab);
     }
 
     return picked;
@@ -125,10 +171,25 @@ export function generateBranchColors(count) {
  * @param {number} [opts.prominentCount=36] number of "major" branches
  * @returns {Map<number, number>} branchId -> color hex
  */
-export function assignBranchColors(graph, { prominentCount = 36 } = {}) {
+export function assignBranchColors(graph, { prominentCount = 36, avoidHex = null, palette = null } = {}) {
     const branches = [...graph.branches].sort((a, b) => b.commits - a.commits);
     const n = branches.length;
-    const colors = generateBranchColors(n);
+    const dark = avoidHex === null ? true
+        : srgbToOklab((avoidHex >> 16) & 255, (avoidHex >> 8) & 255, avoidHex & 255).L < 0.55;
+    let colors;
+    if (palette && palette.length > 0) {
+        // Curated theme hues for the major branches — vivid-boosted so every
+        // sphere pops (keeps hue, forces saturation/lightness; achromatic
+        // entries like mono grays get a real hue). Extras seeded to stay
+        // distinct from the boosted palette + background.
+        const vivid = palette.map((c, i) => vividHex(c, dark, i * 61 + 15));
+        const extra = n > vivid.length
+            ? generateBranchColors(n - vivid.length, { avoidHex, seedHexes: vivid })
+            : [];
+        colors = vivid.slice(0, n).concat(extra);
+    } else {
+        colors = generateBranchColors(n, { avoidHex });
+    }
 
     const map = new Map();
     branches.forEach((b, i) => {

@@ -1,0 +1,152 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<style>
+  :root { --bg:#0d1117; --panel:#161b22cc; --border:#30363d; --text:#e6edf3; --muted:#8b949e; --accent:#58a6ff; --input:#0d1117; --btn:#21262d; --btn-border:#30363d; --btn-text:#e6edf3; --overlay:#010409cc; --err:#f85149; --busy:#d29922; }
+  html,body{margin:0;height:100%;overflow:hidden;background:var(--bg);color:var(--text);font-family:monospace}
+  #app{position:fixed;inset:0}
+  #gengit3d-topwrap{position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:6;display:flex;flex-direction:column;align-items:center;gap:8px;max-width:96vw;pointer-events:none}
+  #gengit3d-bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:center;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:6px 10px;pointer-events:auto}
+  #gengit3d-bar .group{display:flex;gap:6px;align-items:center}
+  #gengit3d-bar .sep{width:1px;height:18px;background:var(--border)}
+  #gengit3d-bar label{font:11px monospace;color:var(--muted);display:flex;align-items:center;gap:4px}
+  #gengit3d-bar select,#gengit3d-bar button{background:var(--input);color:var(--text);border:1px solid var(--border);border-radius:6px;font:11px monospace;padding:3px 6px}
+  #gengit3d-bar input[type=range]{width:80px;accent-color:var(--accent)}
+  #gengit3d-bar .val{color:var(--muted)}
+  #gengit3d-status{font:11px monospace;color:var(--muted)}
+  #gengit3d-status.busy{color:var(--busy)}
+  #gengit3d-status.err{color:var(--err)}
+  #gengit3d-stats{position:fixed;bottom:34px;left:10px;font:11px monospace;color:var(--muted);z-index:5}
+  #gengit3d-help{position:fixed;bottom:10px;left:10px;font:11px monospace;color:var(--muted);z-index:5}
+  #gengit3d-loading{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;font:16px monospace;color:var(--muted);z-index:4}
+  #gengit3d-scrub{position:fixed;bottom:10px;left:50%;transform:translateX(-50%);z-index:6;display:flex;gap:8px;align-items:center;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:6px 12px}
+  #gengit3d-scrub button{height:24px;background:var(--input);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:0 10px;font:12px monospace;cursor:pointer}
+  #gengit3d-scrub input[type=range]{width:220px;accent-color:var(--accent)}
+  #gengit3d-scrub input[type=date]{background:var(--input);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:1px 4px;font:11px monospace;color-scheme:dark;width:112px}
+  #gengit3d-scrub .scrub-opt{display:flex;align-items:center;gap:3px;font:11px monospace;color:var(--muted)}
+  #gengit3d-scrub span{font:11px monospace;color:var(--muted);min-width:90px;text-align:center}
+  #gengit3d-legend,#gengit3d-detail{position:fixed;top:0;height:100%;width:280px;background:var(--panel);z-index:7;display:none}
+  .gengit3d-tick{font:10px monospace;color:var(--muted)}
+  #errlog{position:fixed;top:0;left:0;z-index:99;color:#f66;font:12px monospace;background:#000a;max-width:60vw;white-space:pre-wrap;margin:0;padding:4px}
+</style>
+</head>
+<body>
+  <div id="app"></div>
+
+  <div id="gengit3d-topwrap">
+    <div id="gengit3d-bar">
+      <button id="gengit3d-bar-toggle" class="icon-btn">–</button>
+      <div class="sep"></div>
+      <div class="group">
+        <select id="gengit3d-view"><option>topological</option><option>chronological</option><option>author</option><option>radial</option><option>queue</option><option>real-branches</option></select>
+        <select id="gengit3d-theme"><option>midnight</option><option>slate</option><option>neon</option><option>tokyo</option><option>dracula</option><option>nord</option><option>catppuccin</option><option>gruvbox</option><option>ocean</option><option>matrix</option><option>mono</option><option>daylight</option><option>paper</option><option>solarized</option></select>
+        <select id="gengit3d-colors"><option value="branch">colors: branch</option><option value="author">colors: author</option><option value="age">colors: age</option></select>
+      </div>
+      <div class="sep"></div>
+      <div class="group">
+        <select id="gengit3d-branch"><option value="">all branches</option></select>
+        <span id="gengit3d-author-wrap" style="display:none"><select id="gengit3d-author"><option value="">all authors</option></select></span>
+      </div>
+      <div class="sep"></div>
+      <div class="group">
+        <label>edges <input id="gengit3d-edge-opacity" type="range" min="5" max="100" step="5" value="70" /> <span id="gengit3d-edge-opacity-val" class="val">70%</span></label>
+        <label>nodes <input id="gengit3d-node-size" type="range" min="20" max="300" step="10" value="100" /> <span id="gengit3d-node-size-val" class="val">100%</span></label>
+        <label>space <input id="gengit3d-spacing" type="range" min="25" max="800" step="5" value="100" /> <span id="gengit3d-spacing-val" class="val">100%</span></label>
+      </div>
+      <div class="sep"></div>
+      <div class="group">
+        <select id="gengit3d-fit-mode"><option value="">fit ▸</option><option value="visible">visible</option><option value="all">all</option><option value="selection">selection</option><option value="top">top</option><option value="front">front</option><option value="side">side</option><option value="iso">iso</option></select>
+        <select id="gengit3d-fx"><option value="none">fx: off</option><option value="bloom">fx: bloom</option><option value="trails">fx: trails</option><option value="fxaa">fx: antialias</option><option value="sharpen">fx: sharpen</option><option value="vignette">fx: vignette</option><option value="contrast">fx: contrast+</option><option value="tiltshift">fx: tilt-shift</option><option value="bokeh">fx: depth of field</option></select>
+        <label><input id="gengit3d-rotate" type="checkbox" /> rotate</label>
+        <label><input id="gengit3d-labels" type="checkbox" /> labels</label>
+        <button id="gengit3d-fit" class="icon-btn">⌂</button>
+      </div>
+      <div class="sep"></div>
+      <div class="group">
+        <button id="gengit3d-legend-toggle">Branches</button>
+        <button id="gengit3d-split" class="icon-btn">⧉</button>
+        <button id="gengit3d-refresh" class="icon-btn">↻</button>
+      </div>
+    </div>
+    <div id="gengit3d-status"></div>
+  </div>
+
+  <div id="gengit3d-filebadge" style="display:none"></div>
+  <div id="gengit3d-now" style="display:none"></div>
+  <div id="gengit3d-subtitle" style="display:none"></div>
+  <div id="gengit3d-stats">loading…</div>
+  <div id="gengit3d-help">drag: rotate · scroll: zoom · right-drag: pan · click a commit: details</div>
+  <div id="gengit3d-loading">loading graph…</div>
+
+  <div id="gengit3d-scrub">
+    <button id="gengit3d-play">▶</button>
+    <input id="gengit3d-scrubber" type="range" min="0" max="1000" value="1000" />
+    <label class="scrub-opt"><input id="gengit3d-cam" type="checkbox" checked />cam</label>
+    <select id="gengit3d-speed"><option value="0.5">½×</option><option value="1" selected>1×</option><option value="2">2×</option></select>
+    <span id="gengit3d-scrub-date"></span>
+    <input id="gengit3d-from" type="date" />
+    <input id="gengit3d-to" type="date" />
+    <button id="gengit3d-mark-in">[</button>
+    <button id="gengit3d-mark-out">]</button>
+    <button id="gengit3d-clear-period">✕</button>
+  </div>
+
+  <aside id="gengit3d-legend"><header><span class="h">branches</span><button id="gengit3d-legend-close">✕</button></header><div class="search"><input id="gengit3d-legend-search" type="text" /></div><div class="bulk"><button id="gengit3d-legend-all">All</button><button id="gengit3d-legend-none">None</button><button id="gengit3d-legend-top">Top 10</button></div><div class="list" id="gengit3d-legend-list"></div></aside>
+  <aside id="gengit3d-detail"><header><span class="h">commit details</span><button id="gengit3d-detail-close">✕</button></header><div class="body" id="gengit3d-detail-body"></div></aside>
+
+  <pre id="errlog"></pre>
+
+  <script>
+    window.__errs = [];
+    const logErr = t => { window.__errs.push(t); document.getElementById('errlog').textContent = window.__errs.join('\n'); };
+    window.onerror = (m, s, l, c) => { logErr(m + ' @' + l + ':' + c); };
+    window.addEventListener('unhandledrejection', ev => logErr('rejection: ' + (ev.reason && ev.reason.stack || ev.reason)));
+    window.acquireVsCodeApi = () => ({
+      postMessage: m => {
+        console.log('HOST>', JSON.stringify(m).slice(0, 200));
+        if (m.type === 'requestGraph') {
+          setTimeout(() => window.postMessage({ type: 'graphData', graph: window.__GRAPH__ }, '*'), 30);
+        }
+      },
+      setState() {}, getState() { return null; }
+    });
+    window.__GENGIT3D_CONFIG__ = {
+      defaultView: 'topological', defaultTheme: 'midnight', maxCommits: 5000,
+      autoRotate: false, edgeOpacity: 0.7, nodeSize: 1, nodeSpacing: 1,
+      themeNames: ['midnight','slate','neon','tokyo','dracula','nord','catppuccin','gruvbox','ocean','matrix','mono','daylight','paper','solarized'],
+      viewNames: ['topological','chronological','author','radial','queue','real-branches'],
+    };
+  </script>
+  <script src="graph-data.js"></script>
+  <script src="../dist/webview.js"></script>
+  <script>
+    const seq = new URLSearchParams(location.search).get('seq') || '';
+    const fire = (id, v) => {
+      const el = document.getElementById(id);
+      el.value = v;
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    };
+    setTimeout(() => {
+      try {
+        if (seq === 'space220') fire('gengit3d-spacing', 220);
+        else if (seq === 'space800') fire('gengit3d-spacing', 800);
+        else if (seq === 'space25') fire('gengit3d-spacing', 25);
+        else if (seq === 'node300') fire('gengit3d-node-size', 300);
+        else if (seq === 'node20') fire('gengit3d-node-size', 20);
+        else if (seq === 'fit') document.getElementById('gengit3d-fit').click();
+        else if (seq === 'replay') document.getElementById('gengit3d-play').click();
+        else if (seq === 'replaymid') { fire('gengit3d-scrubber', 550); document.getElementById('gengit3d-play').click(); }
+        else if (seq === 'combo') { fire('gengit3d-spacing', 220); fire('gengit3d-node-size', 50); document.getElementById('gengit3d-fit').click(); }
+        else if (seq === 'shapes') { fire('gengit3d-spacing', 200); fire('gengit3d-node-size', 300); document.getElementById('gengit3d-fit').click(); }
+        else if (seq === 'fxaa') { const s = document.getElementById('gengit3d-fx'); s.value = 'fxaa'; s.dispatchEvent(new Event('change', { bubbles: true })); }
+        else if (seq === 'colorauthor') { const s = document.getElementById('gengit3d-colors'); s.value = 'author'; s.dispatchEvent(new Event('change', { bubbles: true })); }
+        else if (seq === 'colorage') { const s = document.getElementById('gengit3d-colors'); s.value = 'age'; s.dispatchEvent(new Event('change', { bubbles: true })); }
+        else if (seq === 'labels') { const c = document.getElementById('gengit3d-labels'); c.checked = true; c.dispatchEvent(new Event('change', { bubbles: true })); document.getElementById('gengit3d-fit').click(); }
+        document.title = 'SEQ:' + seq + ' ERR:' + window.__errs.length;
+      } catch (e) { logErr('seq throw: ' + e.stack); }
+    }, 2200);
+  </script>
+</body>
+</html>

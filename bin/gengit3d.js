@@ -154,14 +154,83 @@ const CLONE_TTL = parseInt(process.env.GENGIT3D_CLONE_TTL || '3600000', 10);
  * Commit details for one commit: metadata + changed files (+ optional patch).
  * GET /api/commit?repo=<path>&hash=<sha>&patch=1&maxPatch=<chars>
  */
+/**
+ * GET /api/commit?repo=<path>&hash=uncommitted — working tree status + diff.
+ * Same response shape as a normal commit so the detail panel renders as-is.
+ */
+async function handleWorkingTree(res, repo, { wantPatch, maxPatch }) {
+    try {
+        const status = await execFileP(GIT, ['status', '--porcelain=v1', '-uall'], {
+            cwd: repo,
+            maxBuffer: 16 * 1024 * 1024,
+            timeout: 20000,
+        });
+        const numstat = await execFileP(GIT, ['diff', 'HEAD', '--numstat'], {
+            cwd: repo,
+            maxBuffer: 64 * 1024 * 1024,
+            timeout: 30000,
+        }).catch(() => ({ stdout: '' }));
+        const counts = new Map(
+            numstat.stdout.split('\n').filter(Boolean).map(line => {
+                const [a, d, ...rest] = line.split('\t');
+                return [rest.join('\t'), { added: a === '-' ? null : parseInt(a, 10), deleted: d === '-' ? null : parseInt(d, 10) }];
+            })
+        );
+        const files = status.stdout.split('\n').filter(Boolean).map(line => {
+            const path = line.slice(3);
+            return { path, status: line.slice(0, 2).trim(), ...(counts.get(path) ?? { added: null, deleted: null }) };
+        });
+        let patch = '';
+        let patchTruncated = false;
+        if (wantPatch) {
+            const p = await execFileP(GIT, ['diff', 'HEAD', '--no-color'], {
+                cwd: repo,
+                maxBuffer: 128 * 1024 * 1024,
+                timeout: 30000,
+            }).catch(() => ({ stdout: '' }));
+            patch = p.stdout;
+            if (patch.length > maxPatch) {
+                patch = patch.slice(0, maxPatch);
+                patchTruncated = true;
+            }
+        }
+        sendJson(res, 200, {
+            repo,
+            hash: 'uncommitted',
+            short: '○',
+            author: '(working tree)',
+            email: '',
+            date: new Date().toISOString(),
+            committer: '',
+            committerEmail: '',
+            commitDate: '',
+            subject: 'Uncommitted changes',
+            body: '',
+            parents: [],
+            files,
+            stats: {
+                files: files.length,
+                added: files.reduce((s, f) => s + (f.added || 0), 0),
+                deleted: files.reduce((s, f) => s + (f.deleted || 0), 0),
+            },
+            patch,
+            patchTruncated,
+        });
+    } catch (e) {
+        const msg = (e.stderr || e.message || '').toString().slice(0, 300);
+        sendJson(res, 500, { error: `git status failed: ${msg}` });
+    }
+}
+
 async function handleCommit(res, q) {
     const repo = resolve(toNative(q.get('repo') || ''));
     const hash = (q.get('hash') || '').trim();
     const wantPatch = q.get('patch') !== '0';
     const maxPatch = Math.min(400000, Math.max(1000, parseInt(q.get('maxPatch') || '60000', 10) || 60000));
     if (!repo) return sendJson(res, 400, { error: 'missing ?repo=<path>' });
-    if (!SHA_RE.test(hash)) return sendJson(res, 400, { error: 'invalid ?hash=<sha>' });
     if (!(await isGitRepo(repo))) return sendJson(res, 400, { error: `not a git repository: ${repo}` });
+    if (hash === 'uncommitted') return handleWorkingTree(res, repo, { wantPatch, maxPatch });
+    if (!SHA_RE.test(hash)) return sendJson(res, 400, { error: 'invalid ?hash=<sha>' });
 
     const US = '\x1f';
     try {

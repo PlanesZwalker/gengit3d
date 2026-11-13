@@ -35,7 +35,7 @@ const RECORD_SEP = '\x1e'; // record separator
  * @param {object} opts
  * @param {number} [opts.max] max commits (0 = all)
  */
-export async function rawGitLog(repoDir, { max = 0 } = {}) {
+export async function rawGitLog(repoDir, { max = 0, file = null } = {}) {
     const args = [
         'log',
         '--all',
@@ -43,12 +43,126 @@ export async function rawGitLog(repoDir, { max = 0 } = {}) {
         '--date=iso-strict',
         '--topo-order',
     ];
+    if (file) args.push('--follow'); // suit les renommées (pathspec unique)
     if (max > 0) args.push(`-n${max}`);
+    if (file) args.push('--', file);
     const { stdout } = await execFileP(GIT, args, {
         cwd: repoDir,
         maxBuffer: 256 * 1024 * 1024,
     });
     return stdout;
+}
+
+/**
+ * File-history mode: rebuild display edges through non-file commits.
+ * `git log -- <file>` keeps real %P parents — most of them are absent from
+ * the filtered set, which would leave a disconnected strand. Rewire each
+ * commit to its nearest ancestor(s) that ARE in the set (same idea as git's
+ * own history simplification). Full parent map comes from rev-list.
+ */
+async function simplifyForFile(repoDir, graph) {
+    const { stdout } = await execFileP(GIT, ['rev-list', '--all', '--parents'], {
+        cwd: repoDir,
+        maxBuffer: 256 * 1024 * 1024,
+    });
+    const parentsMap = new Map();
+    for (const line of stdout.split('\n')) {
+        const parts = line.trim().split(/\s+/);
+        if (parts[0]) parentsMap.set(parts[0], parts.slice(1));
+    }
+    const inSet = new Set(graph.nodes.map(n => n.id));
+    // BFS le long des ancêtres, en s'arrêtant au premier nœud du set sur
+    // chaque chemin — les merges gardent leurs 2 branches simplifiées.
+    const nearestInSet = id => {
+        const found = [];
+        const seen = new Set();
+        const q = [...(parentsMap.get(id) || [])];
+        let guard = 500000; // borne de sécurité pour les énormes repos
+        while (q.length && guard-- > 0) {
+            const h = q.shift();
+            if (seen.has(h)) continue;
+            seen.add(h);
+            if (inSet.has(h)) {
+                found.push(h);
+                continue; // ne pas traverser un nœud du set
+            }
+            q.push(...(parentsMap.get(h) || []));
+        }
+        return found;
+    };
+    graph.edges = [];
+    for (const n of graph.nodes) {
+        for (const t of nearestInSet(n.id)) graph.edges.push({ source: n.id, target: t });
+    }
+    // Légende : seules les branches réellement présentes dans l'historique
+    // du fichier (les tips stash/empty-branch sont filtrés par l'appelant).
+    const present = new Set(graph.nodes.map(n => n.branch));
+    graph.branches = graph.branches.filter(b => present.has(b.id) || present.has(b.name));
+}
+
+/**
+ * Per-commit churn + touched files in ONE pass:
+ *   `git log --all --format=%H --numstat`
+ * Each record: hash line, then `adds\tdels\tpath` lines ('-' for binaries).
+ * Merges produce no numstat output -> churn 0, files [].
+ * @returns {Promise<Map<string,{churn:number,files:string[]}>>}
+ */
+export async function getNumstat(repoDir) {
+    const { stdout } = await execFileP(
+        GIT,
+        ['log', '--all', '--format=%H', '--numstat', '--date=iso-strict'],
+        { cwd: repoDir, maxBuffer: 256 * 1024 * 1024 }
+    );
+    const map = new Map();
+    let cur = null;
+    for (const line of stdout.split('\n')) {
+        if (!line.trim()) continue;
+        const m = line.match(/^([0-9-]+)\t([0-9-]+)\t(.+)$/);
+        if (m && cur) {
+            const adds = m[1] === '-' ? 0 : Number(m[1]) || 0;
+            const dels = m[2] === '-' ? 0 : Number(m[2]) || 0;
+            cur.churn += adds + dels;
+            if (cur.files.length < 200) {
+                // rename syntaxes: "a => b", "{a => b}/c" — keep the new path
+                let p = m[3];
+                const rm = p.match(/\{?[^{}]*=>\s*([^{}]+)\}?/);
+                if (rm) p = rm[1].trim();
+                cur.files.push(p);
+            }
+            continue;
+        }
+        if (/^[0-9a-f]{40}$/.test(line.trim())) {
+            cur = { churn: 0, files: [] };
+            map.set(line.trim(), cur);
+        }
+    }
+    return map;
+}
+
+/**
+ * "What's happening now" snapshot for the HUD: HEAD branch, ahead/behind
+ * vs upstream, dirty file count. All fields degrade gracefully.
+ */
+export async function getNowInfo(repoDir) {
+    const now = { branch: '', detached: false, ahead: null, behind: null, dirty: 0 };
+    try {
+        const { stdout } = await execFileP(GIT, ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: repoDir });
+        now.branch = stdout.trim();
+        now.detached = now.branch === 'HEAD';
+    } catch { /* non-repo */ }
+    try {
+        const { stdout } = await execFileP(
+            GIT, ['rev-list', '--left-right', '--count', 'HEAD...@{upstream}'], { cwd: repoDir }
+        );
+        const [a, b] = stdout.trim().split(/\s+/).map(Number);
+        now.ahead = a || 0;
+        now.behind = b || 0;
+    } catch { /* no upstream configured */ }
+    try {
+        const wt = await getWorkingTreeStatus(repoDir);
+        now.dirty = wt.files.length;
+    } catch { /* status failed */ }
+    return now;
 }
 
 /**
@@ -196,7 +310,12 @@ export async function getCommitsByBranch(repoDir) {
         if (full.endsWith('/HEAD')) continue; // origin/HEAD symref alias
         if (seen.has(name)) continue;
         seen.add(name);
-        branches.push({ name, hash });
+        branches.push({
+            name,
+            hash,
+            local: full.startsWith('refs/heads/'),
+            remote: full.startsWith('refs/remotes/'),
+        });
     }
 
     // 1b. Stashes: each stash is a separate "branch" so it shows in the legend.
@@ -300,9 +419,13 @@ export function parseGitLog(
             subject: subject || '(no subject)',
             parents,
             branchName,
+            tags: refs.filter(r => r.startsWith('tag:')).map(r => r.slice(4).trim()),
+            churn: 0, // +files — filled by buildGraph via getNumstat
+            files: [],
             // layout fields filled later:
             depth: -1,
             branch: null,
+            remote: false, // owned by a refs/remotes/* branch
             x: 0,
             y: 0,
             z: 0,
@@ -336,9 +459,11 @@ export function parseGitLog(
     // branch assignment: read the truth from git refs (no topology heuristic).
     // Each commit is assigned to the first ref (local before remote) that reaches it.
     const branchColor = {};
+    const remoteSet = new Set(realBranches.filter(b => b.remote).map(b => b.name));
     if (hashToBranch.size > 0) {
         for (const n of nodes) {
             n.branch = hashToBranch.get(n.id) || 'unknown';
+            n.remote = remoteSet.has(n.branch);
         }
         let colorIdx = 0;
         for (const n of nodes) {
@@ -391,6 +516,8 @@ export function parseGitLog(
             commits: 0,
             reach: branchCommits.get(br.name) ?? 0,
             tip: br.hash,
+            local: !!br.local,
+            remote: !!br.remote,
         });
     });
     for (const n of nodes) {
@@ -403,6 +530,8 @@ export function parseGitLog(
                 commits: 0,
                 reach: 0,
                 tip: null,
+                local: false,
+                remote: false,
             };
             branchMap.set(n.branch, b);
         }
@@ -462,10 +591,90 @@ export function parseGitLog(
 }
 
 /**
+ * Working tree status (`git status --porcelain=v1 -uall`).
+ * Returns the list of changed files with their XY status codes — empty when
+ * the tree is clean or status fails (non-repo dir, bare repo, …).
+ * @param {string} repoDir
+ * @returns {Promise<{files:Array<{status:string,path:string}>}>}
+ */
+export async function getWorkingTreeStatus(repoDir) {
+    const { stdout } = await execFileP(GIT, ['status', '--porcelain=v1', '-uall'], {
+        cwd: repoDir,
+        maxBuffer: 16 * 1024 * 1024,
+    });
+    const files = [];
+    for (const line of stdout.split('\n')) {
+        if (!line.trim()) continue;
+        files.push({ status: line.slice(0, 2).trim(), path: line.slice(3) });
+    }
+    return { files };
+}
+
+/**
  * Convenience: parse the repo directly.
+ * Appends a synthetic "uncommitted changes" node (dashed edge to HEAD) when
+ * the working tree is dirty — like GitGraph's top-of-graph marker.
  */
 export async function buildGraph(repoDir, opts = {}) {
-    const raw = await rawGitLog(repoDir, opts);
+    const file = typeof opts.file === 'string' && opts.file ? opts.file : null;
+    const raw = await rawGitLog(repoDir, { ...opts, file });
     const { hashToBranch, branchCommits, branches } = await getCommitsByBranch(repoDir);
-    return parseGitLog(raw, repoDir, { hashToBranch, branchCommits, branches });
+    const graph = parseGitLog(raw, repoDir, { hashToBranch, branchCommits, branches });
+
+    // Churn + touched files (one numstat pass) — drive node size / edge
+    // thickness / hotspot highlighting. Failures degrade to churn 0.
+    try {
+        const stats = await getNumstat(repoDir);
+        for (const n of graph.nodes) {
+            const s = stats.get(n.id);
+            if (s) { n.churn = s.churn; n.files = s.files; }
+        }
+    } catch { /* numstat unavailable */ }
+
+    // "NOW" snapshot for the HUD (HEAD, ahead/behind, dirty count).
+    try {
+        graph.now = await getNowInfo(repoDir);
+        const headNode = graph.head ? graph.nodes.find(n => n.id === graph.head) : null;
+        if (headNode) graph.now.lastDate = headNode.date;
+    } catch { /* HUD degrades to plain stats */ }
+
+    if (file) {
+        // Retirer les tips synthétiques (stash/empty-branch) — hors sujet
+        // dans l'historique d'un fichier — puis recâbler les arêtes.
+        graph.nodes = graph.nodes.filter(n => !n.isTip);
+        await simplifyForFile(repoDir, graph);
+        graph.file = file;
+    }
+
+    try {
+        const wt = await getWorkingTreeStatus(repoDir);
+        const headNode = graph.head ? graph.nodes.find(n => n.id === graph.head) : null;
+        // En mode fichier, le nœud uncommitted n'apparaît que si le fichier
+        // lui-même est modifié dans le working tree.
+        const fileDirty = !file || wt.files.some(f => f.path === file || f.path.endsWith('/' + file));
+        if (wt.files.length && headNode && fileDirty) {
+            graph.nodes.push({
+                id: 'uncommitted',
+                short: '○',
+                author: '(working tree)',
+                email: '',
+                date: headNode.date, // same timeline slot as HEAD
+                subject: `${wt.files.length} uncommitted change(s)`,
+                parents: [graph.head],
+                branchName: headNode.branchName,
+                depth: headNode.depth + 1,
+                branch: headNode.branch, // rides with the checked-out branch
+                x: 0,
+                y: 0,
+                z: 0,
+                isTip: true,
+                tipType: 'uncommitted',
+            });
+            graph.edges.push({ source: 'uncommitted', target: graph.head, dashed: true });
+            graph.hasUncommitted = true;
+        }
+    } catch {
+        // status failed (non-repo dir, etc.) — graph works fine without the node
+    }
+    return graph;
 }

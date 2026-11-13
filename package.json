@@ -29,6 +29,8 @@
   "activationEvents": [
     "onCommand:gengit3d.open",
     "onCommand:gengit3d.openFile",
+    "onCommand:gengit3d.fileHistory",
+    "onView:gengit3d.sidebar",
     "onStartupFinished"
   ],
   "main": "./dist/extension.js",
@@ -41,15 +43,58 @@
       },
       {
         "command": "gengit3d.openFile",
-        "title": "GenGit3D: Open 3D Graph for Current File",
+        "title": "GenGit3D: File History in 3D Graph",
         "icon": "$(graph)"
+      },
+      {
+        "command": "gengit3d.fileHistory",
+        "title": "GenGit3D: File History in 3D Graph",
+        "icon": "$(history)"
       }
     ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "gengit3d",
+          "title": "GenGit3D",
+          "icon": "icon-activity.svg"
+        }
+      ]
+    },
+    "views": {
+      "gengit3d": [
+        {
+          "type": "webview",
+          "id": "gengit3d.sidebar",
+          "name": "3D Commit Graph"
+        }
+      ]
+    },
     "menus": {
+      "view/title": [
+        {
+          "command": "gengit3d.open",
+          "when": "view == gengit3d.sidebar",
+          "group": "navigation"
+        }
+      ],
+      "scm/title": [
+        {
+          "command": "gengit3d.open",
+          "group": "navigation@9"
+        }
+      ],
       "editor/title": [
         {
-          "command": "gengit3d.openFile",
+          "command": "gengit3d.fileHistory",
           "group": "navigation",
+          "when": "resourceScheme == file"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "gengit3d.fileHistory",
+          "group": "gengit3d@1",
           "when": "resourceScheme == file"
         }
       ],
@@ -57,7 +102,12 @@
         {
           "command": "gengit3d.open",
           "group": "2_workspace@5",
-          "when": "explorerResourceIsFolder"
+          "when": "explorerResourceIsFolder || explorerResourceIsFile"
+        },
+        {
+          "command": "gengit3d.fileHistory",
+          "group": "2_workspace@6",
+          "when": "explorerResourceIsFile"
         }
       ]
     },
@@ -83,11 +133,19 @@
             "midnight",
             "slate",
             "neon",
+            "tokyo",
+            "dracula",
+            "nord",
+            "catppuccin",
+            "gruvbox",
+            "ocean",
+            "matrix",
+            "mono",
             "daylight",
             "paper",
             "solarized"
           ],
-          "default": "daylight",
+          "default": "neon",
           "description": "Default colour theme"
         },
         "gengit3d.maxCommits": {
@@ -99,6 +157,36 @@
           "type": "boolean",
           "default": false,
           "description": "Auto-rotate the 3D scene"
+        },
+        "gengit3d.edgeOpacity": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "default": null,
+          "minimum": 0.05,
+          "maximum": 1,
+          "description": "Opacity of the links between commits (0.05–1.0). Null = theme default. Updated automatically by the edges slider."
+        },
+        "gengit3d.nodeSize": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "default": null,
+          "minimum": 0.2,
+          "maximum": 3,
+          "description": "Commit sphere size multiplier (0.2–3.0). Null = default size. Updated automatically by the nodes slider."
+        },
+        "gengit3d.nodeSpacing": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "default": null,
+          "minimum": 0.25,
+          "maximum": 8,
+          "description": "Space between commits multiplier (0.25–8.0). Stretches the time axis only — spreads commits apart without inflating the scene or changing sphere size. Null = default spacing. Updated automatically by the space slider."
         }
       }
     }
@@ -107,6 +195,7 @@
     "build:ext": "esbuild src/extension.ts --bundle --platform=node --external:vscode --outfile=dist/extension.js --format=cjs",
     "build:webview": "esbuild src/webview.ts --bundle --platform=browser --outfile=dist/webview.js --format=iife --minify",
     "build": "npm run build:ext && npm run build:webview",
+    "test": "vitest run",
     "watch:ext": "esbuild src/extension.ts --bundle --platform=node --external:vscode --outfile=dist/extension.js --format=cjs --watch",
     "watch:webview": "esbuild src/webview.ts --bundle --platform=browser --outfile=dist/webview.js --format=iife --watch",
     "package": "vsce package",
@@ -120,6 +209,7 @@
     "@types/vscode": "^1.85.0",
     "esbuild": "^0.20.0",
     "sharp": "^0.35.5",
+    "vitest": "^1.6.1",
     "vsce": "^2.15.0"
   }
 }

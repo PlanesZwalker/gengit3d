@@ -7,6 +7,11 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { AfterimagePass } from 'three/addons/postprocessing/AfterimagePass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { getTheme } from './themes.js';
 import { assignBranchColors } from './branch-colors.js';
 
@@ -25,7 +30,8 @@ export function renderGraph(container, graph, opts) {
     const onSelect = typeof opts.onSelect === 'function' ? opts.onSelect : null;
 
     // assign a distinct color to every branch (mutates branch.color)
-    const branchColorMap = assignBranchColors(graph);
+    // avoidHex: colors also stay maximally distant from the theme background
+    const branchColorMap = assignBranchColors(graph, { avoidHex: theme.background, palette: theme.palette });
 
     const width = container.clientWidth || 800;
     const height = container.clientHeight || 600;
@@ -47,6 +53,8 @@ export function renderGraph(container, graph, opts) {
     const fitDist = (maxDim / 2 / Math.tan((camera.fov * Math.PI) / 360)) * 1.25;
     camera.position.set(center.x + fitDist * 0.55, center.y + fitDist * 0.35, center.z + fitDist * 0.9);
     camera.lookAt(center);
+    const homePos = camera.position.clone();
+    const homeTarget = center.clone();
 
     // depth fog tuned to the actual cloud size. On light themes the fog colour is
     // a MID tone (not the pale background) so distant strands stay readable.
@@ -71,6 +79,68 @@ export function renderGraph(container, graph, opts) {
     controls.autoRotateSpeed = 0.45;
     controls.target.copy(center);
 
+    // ---- camera flights: smooth fly-to used by every fit mode + intro ----
+    const camAnim = {
+        active: false,
+        t0: 0,
+        dur: 0,
+        fromPos: new THREE.Vector3(),
+        toPos: new THREE.Vector3(),
+        fromTgt: new THREE.Vector3(),
+        toTgt: new THREE.Vector3(),
+    };
+    function flyTo(toPos, toTgt, dur = 750) {
+        camAnim.active = true;
+        camAnim.t0 = performance.now();
+        camAnim.dur = dur;
+        camAnim.fromPos.copy(camera.position);
+        camAnim.toPos.copy(toPos);
+        camAnim.fromTgt.copy(controls.target);
+        camAnim.toTgt.copy(toTgt);
+        controls.enabled = false;
+    }
+    function stepCamAnim() {
+        if (!camAnim.active) return;
+        let k = (performance.now() - camAnim.t0) / camAnim.dur;
+        if (k >= 1) k = 1;
+        const e = 1 - Math.pow(1 - k, 3); // easeOutCubic
+        camera.position.lerpVectors(camAnim.fromPos, camAnim.toPos, e);
+        controls.target.lerpVectors(camAnim.fromTgt, camAnim.toTgt, e);
+        camera.lookAt(controls.target);
+        if (k === 1) {
+            camAnim.active = false;
+            controls.enabled = true;
+        }
+    }
+
+    // Framing = bounding sphere of a node set → center + camera distance
+    function frameNodes(nodes) {
+        if (!nodes.length) return null;
+        const b = new THREE.Box3();
+        const tv = new THREE.Vector3();
+        for (const n of nodes) b.expandByPoint(tv.set(n.x, n.y, n.z));
+        const c = b.getCenter(new THREE.Vector3());
+        const s = b.getSize(new THREE.Vector3());
+        const r = Math.max(Math.max(s.x, s.y, s.z) * 0.5, 10);
+        return { center: c, dist: (r / Math.tan((camera.fov * Math.PI) / 360)) * 1.35 };
+    }
+    // view directions (slight offsets keep OrbitControls off the poles)
+    const FIT_DIRS = {
+        top: new THREE.Vector3(0.02, 1, 0.02),
+        front: new THREE.Vector3(0.02, 0.12, 1),
+        side: new THREE.Vector3(1, 0.12, 0.02),
+        iso: new THREE.Vector3(0.55, 0.35, 0.9),
+    };
+    // last node-level filter applied by the toolbar — used by fit 'visible'
+    let lastNodeFilter = null;
+
+    // intro: swoop in from far out instead of popping into existence
+    if (opts.intro !== false) {
+        const dirV = homePos.clone().sub(homeTarget).normalize();
+        camera.position.copy(homeTarget).addScaledVector(dirV, fitDist * 3.4);
+        flyTo(homePos, homeTarget, 1100);
+    }
+
     // lights — key + fill + rim so spheres read as solid matter (per theme)
     scene.add(new THREE.AmbientLight(theme.lights.ambient[0], theme.lights.ambient[1]));
     const key = new THREE.DirectionalLight(theme.lights.key[0], theme.lights.key[1]);
@@ -86,7 +156,7 @@ export function renderGraph(container, graph, opts) {
     const nodeById = new Map(graph.nodes.map(n => [n.id, n]));
     const colorOf = branchId => branchColorMap.get(branchId) ?? 0x4f9dff;
     // Synthetic tip nodes (stash/empty-branch) get a distinct color
-    const TIP_COLORS = { stash: 0xff8c42, 'empty-branch': 0x8b93a7 };
+    const TIP_COLORS = { stash: 0xff8c42, 'empty-branch': 0x8b93a7, uncommitted: 0xf2c14e };
     const tipColorOf = n => {
         if (n.isTip && n.tipType) return TIP_COLORS[n.tipType] ?? 0xff8c42;
         return null;
@@ -190,15 +260,23 @@ export function renderGraph(container, graph, opts) {
         transparent: true,
         opacity: 0.7,
     });
-    for (const e of dashedEdges) {
-        const s = nodeById.get(e.source);
-        const t = nodeById.get(e.target);
-        if (!s || !t) continue;
-        const points = [new THREE.Vector3(s.x, s.y, s.z), new THREE.Vector3(t.x, t.y, t.z)];
-        const geo = new THREE.BufferGeometry().setFromPoints(points);
-        const line = new THREE.Line(geo, dashedMat);
-        line.computeLineDistances();
-        dashedGroup.add(line);
+    if (dashedEdges.length > 0) {
+        const positions = new Float32Array(dashedEdges.length * 6);
+        let pi = 0;
+        for (const e of dashedEdges) {
+            const s = nodeById.get(e.source);
+            const t = nodeById.get(e.target);
+            if (!s || !t) continue;
+            positions[pi++] = s.x; positions[pi++] = s.y; positions[pi++] = s.z;
+            positions[pi++] = t.x; positions[pi++] = t.y; positions[pi++] = t.z;
+        }
+        if (pi > 0) {
+            const geo = new THREE.BufferGeometry();
+            geo.setAttribute('position', new THREE.BufferAttribute(positions.subarray(0, pi), 3));
+            const seg = new THREE.LineSegments(geo, dashedMat);
+            seg.computeLineDistances();
+            dashedGroup.add(seg);
+        }
     }
     edgeGroup.add(dashedGroup);
     scene.add(edgeGroup);
@@ -239,13 +317,19 @@ export function renderGraph(container, graph, opts) {
         if (n.isTip) return 3.5; // synthetic tips are slightly larger
         return 2.2 + Math.min(childCount.get(n.id) || 0, 6) * 0.5;
     };
+    // slot↔node maps: filters compact visible instances, so a raycast slot is
+    // NOT the node index — keep the mapping fresh in every filter function
+    const slotToNode = new Int32Array(graph.nodes.length);
+    const nodeToSlot = new Int32Array(graph.nodes.length);
     const writeNodeMatrix = i => {
+        const slot = nodeToSlot[i];
+        if (slot < 0 || slot >= nodesVisible.count) return; // node is filtered out
         const n = graph.nodes[i];
         const r = baseRadius(n) * (i === selectedIndex ? 1.7 : 1);
         pos.set(n.x, n.y, n.z);
         scl.set(r, r, r);
         m.compose(pos, idq, scl);
-        nodesVisible.setMatrixAt(i, m);
+        nodesVisible.setMatrixAt(slot, m);
     };
     let selectedIndex = -1;
     graph.nodes.forEach((n, i) => {
@@ -255,6 +339,8 @@ export function renderGraph(container, graph, opts) {
         m.compose(pos, idq, scl);
         nodesVisible.setMatrixAt(i, m);
         nodesVisible.setColorAt(i, nodeColorOf(n));
+        slotToNode[i] = i;
+        nodeToSlot[i] = i;
         n._r = r;
     });
     nodesVisible.count = graph.nodes.length;
@@ -273,53 +359,90 @@ export function renderGraph(container, graph, opts) {
     });
     const selection = new THREE.Mesh(new THREE.SphereGeometry(1, 16, 12), selMat);
     selection.visible = false;
+    selection.userData.baseR = 1; // base radius, pulsed in animate()
     scene.add(selection);
 
-    // ---- timeline axis (vertical, history grows upward) with dated ticks ----
-    let yMin = Infinity,
-        yMax = -Infinity;
+    // ---- hover glow: soft halo tracking the commit under the cursor ----
+    const hoverMat = new THREE.MeshBasicMaterial({
+        color: theme.selection,
+        transparent: true,
+        opacity: 0.22,
+        depthWrite: false,
+    });
+    const hoverGlow = new THREE.Mesh(new THREE.SphereGeometry(1, 14, 10), hoverMat);
+    hoverGlow.visible = false;
+    scene.add(hoverGlow);
+
+    // ---- timeline axis along the layout's time dimension ----
+    const horizontal = graph.axis && graph.axis.orient === 'x';
+    let vMin = Infinity,
+        vMax = -Infinity;
     for (const n of graph.nodes) {
-        if (n.y < yMin) yMin = n.y;
-        if (n.y > yMax) yMax = n.y;
+        const v = horizontal ? n.x : n.y;
+        if (v < vMin) vMin = v;
+        if (v > vMax) vMax = v;
     }
-    if (!isFinite(yMin)) {
-        yMin = -1;
-        yMax = 1;
+    if (!isFinite(vMin)) {
+        vMin = -1;
+        vMax = 1;
     }
     const axisGroup = new THREE.Group();
     if (showTimeline) {
-        const axisGeo = new THREE.BufferGeometry().setFromPoints([
-            new THREE.Vector3(0, yMin, 0),
-            new THREE.Vector3(0, yMax, 0),
-        ]);
+        const mk = v => (horizontal ? new THREE.Vector3(v, 0, 0) : new THREE.Vector3(0, v, 0));
+        const axisGeo = new THREE.BufferGeometry().setFromPoints([mk(vMin), mk(vMax)]);
         axisGroup.add(
             new THREE.Line(axisGeo, new THREE.LineBasicMaterial({ color: theme.axis, transparent: true, opacity: 0.9 }))
         );
 
-        // sort nodes by y to map a tick to the nearest commit's date
-        const byY = [...graph.nodes].filter(n => n.date).sort((p, r) => p.y - r.y);
-        const fmtDate = iso => (iso || '').slice(0, 10);
+        // ticks map linearly onto the data range; date labels adapt to span
+        const isTime = graph.axis && graph.axis.mode === 'time';
+        const tMin = isTime ? graph.axis.tMin : 0, tMax = isTime ? graph.axis.tMax : 1;
+        const spanMs = tMax - tMin;
+        const day = 86400000;
+        // compressed visual scale -> real date (inverse of layout's t2v)
+        const vts = graph.axis && graph.axis.vtimes, tss = graph.axis && graph.axis.times;
+        const vMax = vts && vts.length ? vts[vts.length - 1] : 0;
+        const v2t = v => {
+            if (!vts || !tss || !vMax) return tMin + spanMs * v;
+            if (v <= 0) return tss[0];
+            if (v >= vMax) return tss[tss.length - 1];
+            let lo = 0, hi = vts.length - 1;
+            while (hi - lo > 1) {
+                const mid = (lo + hi) >> 1;
+                if (vts[mid] <= v) lo = mid;
+                else hi = mid;
+            }
+            const f = (v - vts[lo]) / (vts[hi] - vts[lo] || 1);
+            return tss[lo] + (tss[hi] - tss[lo]) * f;
+        };
+        const fmtTick = t => {
+            if (!isTime) {
+                const byV = [...graph.nodes].filter(n => n.date).sort((p, r) => (horizontal ? p.x - r.x : p.y - r.y));
+                return (byV[Math.round(t * (byV.length - 1))]?.date || '').slice(0, 10);
+            }
+            const d = new Date(vMax ? v2t(t * vMax) : tMin + spanMs * t);
+            return spanMs > 730 * day ? d.toLocaleDateString(undefined, { month: 'short', year: 'numeric' })
+                 : spanMs > 45 * day ? d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
+                 : spanMs > 2 * day ? d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })
+                 : d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+        };
         const TICKS = 7;
         const tickGeo = whiteAttr(new THREE.SphereGeometry(1.4, 8, 6));
         const tickMat = new THREE.MeshBasicMaterial({ color: theme.axis });
         const ticks = new THREE.InstancedMesh(tickGeo, tickMat, TICKS);
         let ti = 0;
         for (let k = 0; k < TICKS; k++) {
-            const y = yMin + ((yMax - yMin) * k) / (TICKS - 1);
-            pos.set(0, y, 0);
+            const t = k / (TICKS - 1);
+            const v = vMin + (vMax - vMin) * t;
+            pos.copy(mk(v));
             scl.set(1, 1, 1);
             m.compose(pos, idq, scl);
             ticks.setMatrixAt(ti++, m);
-            // nearest commit by y -> its date
-            let near = byY[0];
-            for (const n of byY) {
-                if (Math.abs(n.y - y) < Math.abs(near.y - y)) near = n;
-            }
             const el = document.createElement('div');
             el.className = 'gengit3d-tick';
-            el.textContent = fmtDate(near && near.date);
+            el.textContent = fmtTick(t);
             const label = new CSS2DObject(el);
-            label.position.set(0, y, 0);
+            label.position.copy(mk(v)).add(horizontal ? new THREE.Vector3(0, -8, 0) : new THREE.Vector3(8, 0, 0));
             axisGroup.add(label);
         }
         ticks.count = ti;
@@ -353,7 +476,7 @@ export function renderGraph(container, graph, opts) {
         raycaster.setFromCamera(mouse, camera);
         const hits = raycaster.intersectObject(nodesVisible, false);
         if (hits.length) {
-            const idx = hits[0].instanceId;
+            const idx = slotToNode[hits[0].instanceId];
             return graph.nodes[idx] ? { idx, node: graph.nodes[idx] } : null;
         }
         return null;
@@ -367,15 +490,22 @@ export function renderGraph(container, graph, opts) {
             tooltip.style.top = ev.clientY + 12 + 'px';
             tooltip.textContent = `${hit.node.short} ${hit.node.author}: ${hit.node.subject.slice(0, 60)}`;
             document.body.style.cursor = 'pointer';
+            hoverGlow.position.set(hit.node.x, hit.node.y, hit.node.z);
+            hoverGlow.userData.baseS = hit.node._r * 1.9 + 1;
+            hoverGlow.scale.setScalar(hoverGlow.userData.baseS);
+            hoverGlow.visible = true;
             return;
         }
         tooltip.style.display = 'none';
         document.body.style.cursor = 'default';
+        hoverGlow.visible = false;
     }
     renderer.domElement.addEventListener('mousemove', onMove);
 
     function select(idx) {
+        const prev = selectedIndex;
         selectedIndex = idx;
+        if (prev >= 0 && prev !== idx) writeNodeMatrix(prev); // shrink the old pick back
         if (idx < 0) {
             selection.visible = false;
         } else {
@@ -383,16 +513,18 @@ export function renderGraph(container, graph, opts) {
             selection.visible = true;
             selection.position.set(n.x, n.y, n.z);
             const rr = baseRadius(n) * 2.4;
+            selection.userData.baseR = rr;
             selection.scale.set(rr, rr, rr);
             writeNodeMatrix(idx);
-            nodesVisible.instanceMatrix.needsUpdate = true;
         }
+        nodesVisible.instanceMatrix.needsUpdate = true;
     }
 
     function onClick(ev) {
         const hit = pick(ev);
         if (!hit) return;
         select(hit.idx);
+        api.fitView('selection'); // auto-zoom on the clicked commit
         if (onSelect) onSelect(hit.node, { repo: graph.source?.repo || graph.repoDir || null });
     }
     // distinguish a click from an orbit drag
@@ -407,6 +539,78 @@ export function renderGraph(container, graph, opts) {
         onClick(ev);
     });
 
+    // ---- branch tip labels: the LAST commit of every branch, tagged with
+    // name + hash + subject — the graph's landmarks. On by default (toolbar
+    // "tips" checkbox), capped at the ~32 nearest to the camera. Branches
+    // sharing the same tip commit stack vertically to stay readable.
+    const TL_MAX = 32;
+    let tipLabelsOn = true;
+    const tipEntries = [];
+    for (const br of graph.branches) {
+        const n = br.tip ? nodeById.get(br.tip) : null;
+        if (!n) continue; // tip outside the rendered graph (maxCommits, orphan ref)
+        const hex = n.isTip && n.tipType ? (TIP_COLORS[n.tipType] ?? 0xff8c42) : colorOf(br.id);
+        tipEntries.push({ br, n, css: '#' + hex.toString(16).padStart(6, '0') });
+    }
+    const tlDivs = [];
+    for (let i = 0; i < Math.min(TL_MAX, tipEntries.length); i++) {
+        const el = document.createElement('div');
+        el.style.cssText =
+            'position:fixed;pointer-events:none;background:var(--overlay);color:var(--text);' +
+            'padding:2px 8px;border-radius:5px;font:10px monospace;z-index:9;display:none;' +
+            'border:1px solid var(--border);border-left-width:3px;max-width:280px;opacity:.95;';
+        const nm = document.createElement('div'); // branch name (coloured)
+        nm.style.cssText = 'font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+        const sb = document.createElement('div'); // hash · subject (description)
+        sb.style.cssText = 'color:var(--muted);font-size:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+        el.append(nm, sb);
+        document.body.appendChild(el);
+        tlDivs.push({ el, nm, sb, text: '' });
+    }
+    const tipProj = new THREE.Vector3();
+    function updateTipLabels() {
+        if (!tipLabelsOn) {
+            for (const d of tlDivs) if (d.el.style.display !== 'none') d.el.style.display = 'none';
+            return;
+        }
+        const rect = renderer.domElement.getBoundingClientRect();
+        const cands = [];
+        for (const e of tipEntries) {
+            const n = e.n;
+            if (lastNodeFilter && !lastNodeFilter(n)) continue; // filtered out (ghosted)
+            tipProj.set(n.x, n.y, n.z).project(camera);
+            if (tipProj.z > 1) continue; // behind the camera
+            const x = (tipProj.x * 0.5 + 0.5) * rect.width;
+            const y = (-tipProj.y * 0.5 + 0.5) * rect.height;
+            if (x < -60 || x > rect.width + 60 || y < -30 || y > rect.height + 30) continue;
+            cands.push({ e, x, y, z: tipProj.z });
+        }
+        cands.sort((pa, pb) => pa.z - pb.z);
+        const stacked = new Map();
+        for (let i = 0; i < tlDivs.length; i++) {
+            const d = tlDivs[i];
+            const c = cands[i];
+            if (!c) {
+                if (d.el.style.display !== 'none') d.el.style.display = 'none';
+                continue;
+            }
+            const row = stacked.get(c.e.n.id) || 0;
+            stacked.set(c.e.n.id, row + 1);
+            const txt = `⎇ ${c.e.br.name}|${c.e.n.short} · ${c.e.n.subject}`;
+            if (d.text !== txt) {
+                d.text = txt;
+                const cut = txt.indexOf('|');
+                d.nm.textContent = txt.slice(0, cut);
+                d.sb.textContent = txt.slice(cut + 1);
+                d.nm.style.color = c.e.css;
+                d.el.style.borderLeftColor = c.e.css;
+            }
+            d.el.style.display = 'block';
+            d.el.style.left = rect.left + c.x + 12 + 'px';
+            d.el.style.top = rect.top + c.y - 14 + row * 32 + 'px';
+        }
+    }
+
     // resize
     function onResize() {
         const w = container.clientWidth || 800;
@@ -415,15 +619,68 @@ export function renderGraph(container, graph, opts) {
         camera.updateProjectionMatrix();
         renderer.setSize(w, h);
         labelRenderer.setSize(w, h);
+        if (composer) composer.setSize(w, h);
     }
     window.addEventListener('resize', onResize);
+
+    // ---- post-processing effects (bloom / trails), built lazily ----
+    let composer = null;
+    let bloomPass = null;
+    // on light themes the pale background is already bright — soften bloom
+    // so the whole canvas doesn't wash out
+    const bgLuma = () => {
+        const hsl = { h: 0, s: 0, l: 0 };
+        new THREE.Color(theme.background).getHSL(hsl);
+        return hsl.l;
+    };
+    function disposeComposer() {
+        if (!composer) return;
+        for (const p of composer.passes) p.dispose?.();
+        composer.dispose?.();
+        composer = null;
+        bloomPass = null;
+    }
+    function setEffect(mode) {
+        if (mode === 'none' || !mode) {
+            disposeComposer();
+            return;
+        }
+        disposeComposer();
+        composer = new EffectComposer(renderer);
+        composer.addPass(new RenderPass(scene, camera));
+        if (mode === 'bloom') {
+            bloomPass = new UnrealBloomPass(
+                new THREE.Vector2(width, height),
+                bgLuma() > 0.5 ? 0.4 : 0.85,
+                0.55,
+                0.72
+            );
+            composer.addPass(bloomPass);
+        } else if (mode === 'trails') {
+            composer.addPass(new AfterimagePass(0.92));
+        }
+        composer.addPass(new OutputPass()); // correct colour space through the chain
+        composer.setSize(container.clientWidth || width, container.clientHeight || height);
+    }
 
     // animate
     let raf = 0;
     function animate() {
         raf = requestAnimationFrame(animate);
-        controls.update();
-        renderer.render(scene, camera);
+        stepCamAnim();
+        updateTipLabels(); // branch tip cards (last commit of each branch)
+        if (!camAnim.active) controls.update();
+        const t = performance.now() * 0.001;
+        if (selection.visible) {
+            const r = selection.userData.baseR * (1 + 0.12 * Math.sin(t * 4.2));
+            selection.scale.setScalar(r);
+            selMat.opacity = 0.6 + 0.3 * (0.5 + 0.5 * Math.sin(t * 4.2));
+        }
+        if (hoverGlow.visible) {
+            hoverGlow.scale.setScalar(hoverGlow.userData.baseS * (1 + 0.15 * Math.sin(t * 5.5)));
+        }
+        if (composer) composer.render();
+        else renderer.render(scene, camera);
         labelRenderer.render(scene, camera);
     }
     animate();
@@ -469,6 +726,7 @@ export function renderGraph(container, graph, opts) {
          * @param {boolean} visible
          */
         setTipsVisible(visible) {
+            lastNodeFilter = n => visible || !n.isTip;
             // Filter nodes: hide synthetic tips
             let vi = 0,
                 hi = 0;
@@ -480,10 +738,13 @@ export function renderGraph(container, graph, opts) {
                 if (show) {
                     nodesVisible.setMatrixAt(vi, m);
                     nodesVisible.setColorAt(vi, nodeColorOf(n));
+                    slotToNode[vi] = i;
+                    nodeToSlot[i] = vi;
                     vi++;
                 } else {
                     nodesHidden.setMatrixAt(hi, m);
                     nodesHidden.setColorAt(hi, nodeColorOf(n));
+                    nodeToSlot[i] = -1;
                     hi++;
                 }
             }
@@ -529,6 +790,7 @@ export function renderGraph(container, graph, opts) {
          * @param {Set<string>|null} visibleBranchIds  null = show all
          */
         setBranchFilter(visibleBranchIds) {
+            lastNodeFilter = n => !visibleBranchIds || visibleBranchIds.has(n.branch);
             let vi = 0,
                 hi = 0;
             for (let i = 0; i < graph.nodes.length; i++) {
@@ -538,10 +800,13 @@ export function renderGraph(container, graph, opts) {
                 if (isVisible) {
                     nodesVisible.setMatrixAt(vi, m);
                     nodesVisible.setColorAt(vi, tintOf(n.branch));
+                    slotToNode[vi] = i;
+                    nodeToSlot[i] = vi;
                     vi++;
                 } else {
                     nodesHidden.setMatrixAt(hi, m);
                     nodesHidden.setColorAt(hi, tintOf(n.branch));
+                    nodeToSlot[i] = -1;
                     hi++;
                 }
             }
@@ -584,6 +849,10 @@ export function renderGraph(container, graph, opts) {
          * @param {number|null} maxDate  timestamp ms, or null
          */
         setDateFilter(minDate, maxDate) {
+            lastNodeFilter = n => {
+                const t = Date.parse(n.date);
+                return !Number.isFinite(t) || ((!minDate || t >= minDate) && (!maxDate || t <= maxDate));
+            };
             let vi = 0,
                 hi = 0;
             for (let i = 0; i < graph.nodes.length; i++) {
@@ -594,10 +863,13 @@ export function renderGraph(container, graph, opts) {
                 if (inRange) {
                     nodesVisible.setMatrixAt(vi, m);
                     nodesVisible.setColorAt(vi, tintOf(n.branch));
+                    slotToNode[vi] = i;
+                    nodeToSlot[i] = vi;
                     vi++;
                 } else {
                     nodesHidden.setMatrixAt(hi, m);
                     nodesHidden.setColorAt(hi, tintOf(n.branch));
+                    nodeToSlot[i] = -1;
                     hi++;
                 }
             }
@@ -634,8 +906,49 @@ export function renderGraph(container, graph, opts) {
             edgesHidden.instanceMatrix.needsUpdate = true;
             edgesHidden.instanceColor.needsUpdate = true;
         },
+        /**
+         * Frame the graph with an animated camera flight.
+         * @param {'visible'|'all'|'selection'|'top'|'front'|'side'|'iso'} mode
+         *   visible/all keep the current view direction; top/front/side/iso
+         *   jump to a canonical axis; selection flies to the clicked commit.
+         */
+        fitView(mode = 'visible') {
+            const curDir = () => camera.position.clone().sub(controls.target).normalize();
+            if (mode === 'selection') {
+                if (selectedIndex < 0) return; // nothing selected — keep the shot
+                const nd = graph.nodes[selectedIndex];
+                const c = new THREE.Vector3(nd.x, nd.y, nd.z);
+                const d = Math.max(maxDim * 0.12, 60);
+                flyTo(c.clone().addScaledVector(curDir(), d), c, 650);
+                return;
+            }
+            const pool =
+                mode === 'all' ? graph.nodes
+                : lastNodeFilter ? graph.nodes.filter(lastNodeFilter)
+                : graph.nodes;
+            const frame = frameNodes(pool.length ? pool : graph.nodes);
+            if (!frame) return;
+            const dirV = FIT_DIRS[mode] ? FIT_DIRS[mode].clone().normalize() : curDir();
+            flyTo(frame.center.clone().addScaledVector(dirV, frame.dist), frame.center);
+        },
+        resetCamera() {
+            api.fitView('visible');
+        },
+        setEffect(mode) {
+            setEffect(mode);
+        },
+        /**
+         * Show/hide the branch tip labels (last-commit cards).
+         * @param {boolean} on
+         */
+        setTipLabelsVisible(on) {
+            tipLabelsOn = !!on;
+            if (!tipLabelsOn) for (const d of tlDivs) d.el.style.display = 'none';
+        },
         dispose() {
             cancelAnimationFrame(raf);
+            disposeComposer();
+            for (const d of tlDivs) d.el.remove(); // appended to body, not container
             controls.dispose();
             renderer.dispose();
         },

@@ -22,15 +22,21 @@
     #gengit3d-help { position: fixed; bottom: 10px; left: 10px; font: 11px monospace; color: var(--muted); z-index: 5; }
     #gengit3d-loading { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; font: 16px monospace; color: var(--muted); z-index: 4; text-align: center; padding: 0 20px; }
     .err { color: var(--err); }
-    #gengit3d-bar { position: fixed; top: 10px; left: 50%; transform: translateX(-50%); z-index: 6; display: flex; gap: 6px; align-items: center; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 6px; box-shadow: 0 4px 18px #0004; }
-    #gengit3d-bar input, #gengit3d-bar select { background: var(--input); color: var(--text); border: 1px solid var(--border); border-radius: 5px; padding: 6px 9px; font: 12px monospace; outline: none; }
-    #gengit3d-bar input#gengit3d-repo { width: 300px; }
-    #gengit3d-bar input#gengit3d-depth { width: 56px; }
+    #gengit3d-bar { position: fixed; top: 10px; left: 50%; transform: translateX(-50%); z-index: 6; display: flex; gap: 4px; align-items: center; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 5px 8px; box-shadow: 0 6px 22px #0005; flex-wrap: wrap; max-width: 96vw; justify-content: center; backdrop-filter: blur(10px); }
+    #gengit3d-bar .brand { display: flex; align-items: center; padding: 0 3px; user-select: none; }
+    #gengit3d-bar .group { display: flex; gap: 4px; align-items: center; }
+    #gengit3d-bar .sep { width: 1px; align-self: stretch; background: var(--border); margin: 0 4px; }
+    #gengit3d-bar select, #gengit3d-bar button, #gengit3d-bar input:not([type="checkbox"]) { height: 24px; box-sizing: border-box; background: var(--input); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 0 8px; font: 11px monospace; outline: none; }
+    #gengit3d-bar input#gengit3d-repo { width: 280px; }
+    #gengit3d-bar input#gengit3d-depth { width: 60px; }
     #gengit3d-bar input:focus, #gengit3d-bar select:focus { border-color: var(--accent); }
-    #gengit3d-bar button { background: var(--btn); color: var(--btn-text); border: 1px solid var(--btn-border); border-radius: 5px; padding: 6px 12px; font: 12px monospace; cursor: pointer; }
-    #gengit3d-bar button:hover { filter: brightness(1.12); }
+    #gengit3d-bar select, #gengit3d-bar button { cursor: pointer; transition: border-color .12s ease, background .12s ease; }
+    #gengit3d-bar select:hover, #gengit3d-bar button:hover { border-color: var(--accent); background: var(--btn); color: var(--btn-text); }
     #gengit3d-bar button:disabled { opacity: .5; cursor: default; }
-    #gengit3d-bar label { font: 11px monospace; color: var(--muted); }
+    #gengit3d-bar .icon-btn { width: 26px; padding: 0; text-align: center; flex-shrink: 0; }
+    #gengit3d-bar label { font: 10px monospace; color: var(--muted); display: flex; align-items: center; gap: 5px; white-space: nowrap; }
+    #gengit3d-bar input[type="checkbox"] { accent-color: var(--accent); margin: 0; }
+    #gengit3d-bar.collapsed > *:not(#gengit3d-bar-toggle) { display: none; }
     #gengit3d-status { position: fixed; top: 58px; left: 50%; transform: translateX(-50%); z-index: 6; font: 11px monospace; color: var(--muted); background: var(--overlay); padding: 4px 10px; border-radius: 5px; max-width: 90vw; }
     #gengit3d-status.busy { color: var(--busy); }
     #gengit3d-status.err { color: var(--err); }
@@ -100,31 +106,57 @@
   <div id="app"></div>
 
   <div id="gengit3d-bar">
-    <input id="gengit3d-repo" type="text" spellcheck="false" list="gengit3d-repos"
-           placeholder="repo path (/repos/x, C:\path) or git URL (https://…)" />
-    <datalist id="gengit3d-repos"></datalist>
-    <label for="gengit3d-depth">depth</label>
-    <input id="gengit3d-depth" type="number" min="0" value="500" title="shallow clone depth (URL only, 0 = full)" />
-    <button id="gengit3d-render">Render</button>
-    <label for="gengit3d-theme">theme</label>
-    <select id="gengit3d-theme" title="colour theme (light + dark)"></select>
-    <label for="gengit3d-view">view</label>
-    <select id="gengit3d-view" title="graph layout view">
-      <option value="topological">topological (cylindrical)</option>
-      <option value="chronological">chronological (linear)</option>
-      <option value="author">author (cylindrical)</option>
-      <option value="radial">radial (concentric)</option>
-      <option value="queue">queue (columns)</option>
-      <option value="real-branches">real branches (cylindrical)</option>
-    </select>
-    <label title="rotate the view automatically"><input id="gengit3d-rotate" type="checkbox" /> rotate</label>
-    <label title="show stash/empty-branch tip markers"><input id="gengit3d-tips" type="checkbox" checked /> tips</label>
-    <button id="gengit3d-legend-toggle" title="show/hide branch legend">Branches</button>
+    <button id="gengit3d-bar-toggle" class="icon-btn" title="collapse/expand the toolbar">–</button>
+    <svg class="brand" width="15" height="15" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="3" r="2.4" fill="var(--accent)"/><circle cx="4" cy="13" r="2.4" fill="var(--accent)" opacity=".65"/><circle cx="12" cy="13" r="2.4" fill="var(--accent)" opacity=".65"/><path d="M8 5.4v3M8 8.4 4.7 11M8 8.4l3.3 2.6" stroke="var(--accent)" stroke-width="1.2" fill="none"/></svg>
+    <div class="sep"></div>
+    <div class="group">
+      <input id="gengit3d-repo" type="text" spellcheck="false" list="gengit3d-repos"
+             placeholder="repo path (/repos/x, C:\path) or git URL (https://…)" />
+      <datalist id="gengit3d-repos"></datalist>
+      <input id="gengit3d-depth" type="number" min="0" value="500" title="shallow clone depth (URL only, 0 = full)" />
+      <button id="gengit3d-render">Render</button>
+    </div>
+    <div class="sep"></div>
+    <div class="group">
+      <select id="gengit3d-view" title="graph layout view">
+        <option value="topological">topological (cylindrical)</option>
+        <option value="chronological">chronological (linear)</option>
+        <option value="author">author (cylindrical)</option>
+        <option value="radial">radial (concentric)</option>
+        <option value="queue">queue (columns)</option>
+        <option value="real-branches">real branches (cylindrical)</option>
+      </select>
+      <select id="gengit3d-theme" title="colour theme (light + dark)"></select>
+    </div>
+    <div class="sep"></div>
+    <div class="group">
+      <select id="gengit3d-fit-mode" title="camera framing — animated fly-to">
+        <option value="">fit ▸</option>
+        <option value="visible">visible</option>
+        <option value="all">all</option>
+        <option value="selection">selection</option>
+        <option value="top">top</option>
+        <option value="front">front</option>
+        <option value="side">side</option>
+        <option value="iso">iso</option>
+      </select>
+      <select id="gengit3d-fx" title="post-processing effect">
+        <option value="none">fx: off</option>
+        <option value="bloom">fx: bloom</option>
+        <option value="trails">fx: trails</option>
+      </select>
+      <label title="rotate the view automatically"><input id="gengit3d-rotate" type="checkbox" /> rotate</label>
+      <label title="branch tip cards (last commit of each branch) + stash/empty-branch tip markers"><input id="gengit3d-tips" type="checkbox" checked /> tips</label>
+    </div>
+    <div class="sep"></div>
+    <div class="group">
+      <button id="gengit3d-legend-toggle" title="show/hide branch legend">Branches</button>
+    </div>
   </div>
 
   <div id="gengit3d-stats">loading…</div>
   <div id="gengit3d-status"></div>
-  <div id="gengit3d-help">drag: rotate · scroll: zoom · right-drag: pan · click a commit: details · hover: info</div>
+  <div id="gengit3d-help">drag: rotate · scroll: zoom · right-drag: pan · click a commit: details + zoom · hover: info</div>
   <div id="gengit3d-loading">loading gengit3d.graph.json …</div>
 
   <aside id="gengit3d-legend">
@@ -226,6 +258,11 @@
         autoRotate: rotateEl.checked,
         onSelect: showCommitDetails,
       });
+      // fx is a state: reapply it to the new renderer
+      if (current.setEffect) current.setEffect(fxSel.value || 'none');
+      // tips toggle is also a state: markers + labels
+      if (current.setTipsVisible) current.setTipsVisible(tipsEl.checked);
+      if (current.setTipLabelsVisible) current.setTipLabelsVisible(tipsEl.checked);
       buildLegend(graph);
       if (label) setStatus(label);
     }
@@ -458,13 +495,35 @@
                 (d) => `${d.source.repo} → ${d.nodes.length} commits, ${d.branches.length} branches`);
         }
     });
+    // toolbar collapse/expand
+    const bar = document.getElementById('gengit3d-bar');
+    const barToggle = document.getElementById('gengit3d-bar-toggle');
+    barToggle.addEventListener('click', () => {
+        const collapsed = bar.classList.toggle('collapsed');
+        barToggle.textContent = collapsed ? '☰' : '–';
+        barToggle.title = collapsed ? 'expand the toolbar' : 'collapse the toolbar';
+    });
+
     rotateEl.addEventListener('change', () => { if (current) current.setAutoRotate(rotateEl.checked); });
 
-    // tips toggle: show/hide stash/empty-branch tip markers
+    // fit selector — action menu (snaps back to "fit ▸" after the flight)
+    const fitSel = document.getElementById('gengit3d-fit-mode');
+    fitSel.addEventListener('change', () => {
+        if (current && current.fitView && fitSel.value) current.fitView(fitSel.value);
+        fitSel.value = '';
+    });
+    // fx selector — post-processing effect, persists across redraws
+    const fxSel = document.getElementById('gengit3d-fx');
+    fxSel.addEventListener('change', () => {
+        if (current && current.setEffect) current.setEffect(fxSel.value || 'none');
+    });
+
+    // tips toggle: show/hide branch tip cards + stash/empty-branch tip markers
     const tipsEl = document.getElementById('gengit3d-tips');
     tipsEl.addEventListener('change', () => {
-        if (!current || !current.setTipsVisible) return;
-        current.setTipsVisible(tipsEl.checked);
+        if (!current) return;
+        if (current.setTipsVisible) current.setTipsVisible(tipsEl.checked);
+        if (current.setTipLabelsVisible) current.setTipLabelsVisible(tipsEl.checked);
     });
 
     // theme <select>
